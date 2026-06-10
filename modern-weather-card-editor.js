@@ -1,4 +1,4 @@
-class ZuhauseWeatherCardEditor extends HTMLElement {
+class ModernWeatherCardEditor extends HTMLElement {
   setConfig(config) {
     this._config = { ...config };
     this._render();
@@ -81,4 +81,4 @@ class ZuhauseWeatherCardEditor extends HTMLElement {
   }
 }
 
-customElements.define('zuhause-weather-card-editor', ZuhauseWeatherCardEditor);
+customElements.define('modern-weather-card-editor', ModernWeatherCardEditor);
