@@ -1,0 +1,41 @@
+name: Bug Report
+description: Report a bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Please provide the following information to help reproduce the issue.
+  - type: input
+    id: version
+    attributes:
+      label: Card Version
+      description: e.g., v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant Version
+      description: e.g., 2026.5.1
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Provide a clear description of the bug. What is happening? What is the expected behaviour? Where is it happening?
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: YAML Configuration
+      description: Paste your card configuration. Dont forget to remove sensitive data.
+      render: yaml
+  - type: textarea
+    id: browser_logs
+    attributes:
+      label: Console Logs
+      description: Include relevant errors from the browser console or Home Assistant directly.
+      render: shell
