@@ -284,11 +284,9 @@ class ModernWeatherCard extends HTMLElement {
 
     const shortFcText = this._getShortForecastText(currentCondition);
 
-    // Deep compare to prevent DOM thrashing
-    const currentStateHash = JSON.stringify({
-      currentCondition, numericTemp, timeOfDay, locationName, highTemp, lowTemp,
-      shortFcText, forecast: this._forecast.slice(0, this._config.forecast_days)
-    });
+    // Fast scalar comparison to prevent DOM thrashing
+    const forecastCheck = this._forecast.slice(0, this._config.forecast_days).map(f => `${f.datetime}|${f.condition}|${f.temperature}|${f.templow}`).join(',');
+    const currentStateHash = `${currentCondition}|${numericTemp}|${timeOfDay}|${locationName}|${highTemp}|${lowTemp}|${shortFcText}|${forecastCheck}`;
 
     if (this._lastStateHash === currentStateHash) return;
     this._lastStateHash = currentStateHash;
@@ -297,7 +295,10 @@ class ModernWeatherCard extends HTMLElement {
     const sceneChanged = sceneKey !== this._lastSceneKey;
     if (sceneChanged) this._lastSceneKey = sceneKey;
 
-    const hero = this.shadowRoot.getElementById('hero');
+    const hero = this.{
+      this._lastSceneKey = sceneKey;
+      this._clearAllTimeouts();
+    }o');
     const skyPalette = this._getSkyPalette(timeOfDay);
     hero.style.background = skyPalette.length === 3
       ? `linear-gradient(135deg, ${skyPalette[0]}, ${skyPalette[1]}, ${skyPalette[2]})`
