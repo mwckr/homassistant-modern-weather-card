@@ -1,5 +1,5 @@
 /**
- * Zuhause Weather Card v0.1.0
+ * Modern Weather Card v0.1.0
  * Layered architecture: Sky → Weather effects → Icon → Text
  * Features: astro time-of-day, volumetric fog, layered snow, lightning flash,
  * rain splashes, dawn/dusk horizon motion, glassmorphic forecast.
@@ -122,7 +122,7 @@ const STYLES = `
 
 /* ── Main Component ───────────────────────────────────── */
 
-class ZuhauseWeatherCard extends HTMLElement {
+class ModernWeatherCard extends HTMLElement {
 
   /* ── HA lifecycle ─────────────────────────────────────── */
 
@@ -177,9 +177,9 @@ class ZuhauseWeatherCard extends HTMLElement {
 
   static async getConfigElement() { 
     await import('./modern-weather-card-editor.js');
-    return document.createElement('zuhause-weather-card-editor'); 
+    return document.createElement('modern-weather-card-editor'); 
   }
-  static getStubConfig()     { return { entity: 'weather.home', name: 'Zuhause', show_forecast: true, show_low_temp: false, time_format: 'default', alert_lookahead: 12 }; }
+  static getStubConfig()     { return { entity: 'weather.home', name: 'Modern', show_forecast: true, show_low_temp: false, time_format: 'default', alert_lookahead: 12 }; }
   getCardSize() { return this._config?.show_forecast ? 5 : 3; }
 
   /* ── Memory Management Helpers ────────────────────────── */
@@ -918,7 +918,7 @@ class ZuhauseWeatherCard extends HTMLElement {
 
 /* ── Registration ─────────────────────────────────────── */
 
-customElements.define('zuhause-weather-card', ZuhauseWeatherCard);
+customElements.define('modern-weather-card', ModernWeatherCard);
 window.customCards = window.customCards || [];
-window.customCards.push({ type: 'zuhause-weather-card', name: 'Zuhause Weather Card', description: 'Layered weather card with atmospheric effects', preview: true });
-console.info('%c ZUHAUSE-WEATHER %c v0.1.0 ','background:#2563eb;color:#fff;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px','background:#0f172a;color:#f8fafc;padding:2px 6px;border-radius:0 4px 4px 0');
+window.customCards.push({ type: 'modern-weather-card', name: 'Modern Weather Card', description: 'Layered weather card with atmospheric effects', preview: true });
+console.info('%c MODERN-WEATHER %c v0.1.0 ','background:#2563eb;color:#fff;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px','background:#0f172a;color:#f8fafc;padding:2px 6px;border-radius:0 4px 4px 0');

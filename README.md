@@ -1,6 +1,8 @@
-# Zuhause Weather Card
+# Modern Weather Card
 
-A layered layout weather card for Home Assistant focusing on animated atmospheric effects and time-of-day visuals. 
+A modern & layered weather card for Home Assistant focusing on animated effects and time-of-day visuals, inspired by apps like Apple Weather.
+
+![Modern Weather Card Preview](assets/preview.png)
 
 ## Features
 
