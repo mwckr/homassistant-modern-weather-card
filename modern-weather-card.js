@@ -272,7 +272,7 @@ class ModernWeatherCard extends HTMLElement {
     }
 
     const currentCondition = entity.state;
-    const numericTemp = Math.round(entity.attributes.temperature ?? 0);
+    const numericTemp = entity.attributes.temperature != null ? Math.round(entity.attributes.temperature) : '--';
     const sunState = this._hass.states[this._config.sun_entity];
     const timeOfDay = this._getTimeOfDay(sunState);
     const weatherMeta = this._getWeatherMeta(currentCondition, timeOfDay);
@@ -319,7 +319,7 @@ class ModernWeatherCard extends HTMLElement {
       : '';
     this.shadowRoot.getElementById('locName').textContent = locationName;
     
-    this.shadowRoot.getElementById('temp').textContent = `${numericTemp}°`;
+    this.shadowRoot.getElementById('temp').textContent = numericTemp !== '--' ? `${numericTemp}°` : '--';
     this.shadowRoot.getElementById('cond').textContent = highTemp !== ''
       ? `${weatherMeta.label} · ${highTemp}°${lowTemp !== '' ? ' / ' + lowTemp + '°' : ''}`
       : weatherMeta.label;
@@ -547,15 +547,17 @@ class ModernWeatherCard extends HTMLElement {
   _manageLightning(condition) {
     const isLightning = (condition === 'lightning' || condition === 'lightning-rainy');
     
+    this._lightningActive = isLightning;
     if (!isLightning) return;
     this._scheduleLightning();
   }
 
   _scheduleLightning() {
-    if (!this._isConnected) return;
+    if (!this._isConnected || !this._lightningActive) return;
     const delay = 4000 + Math.random() * 14000;
     
     this._safeTimeout(() => {
+      if (!this._lightningActive) return;
       this._triggerFlash();
       this._scheduleLightning();
     }, delay);
@@ -863,9 +865,10 @@ class ModernWeatherCard extends HTMLElement {
 
   async _ensureForecastSub() {
     if (!this._hass?.connection || !this._config?.entity) return;
-    if (this._subscribedEntity === this._config.entity) return;
+    const targetSub = `${this._config.entity}|${this._config.forecast_entity}`;
+    if (this._subscribedEntity === targetSub) return;
     this._unsubForecast();
-    this._subscribedEntity = this._config.entity;
+    this._subscribedEntity = targetSub;
 
     try {
       this._forecastUnsub = await this._hass.connection.subscribeMessage(
