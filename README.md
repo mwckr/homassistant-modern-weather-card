@@ -54,3 +54,10 @@ Add the card to your dashboard. It can be configured via the visual UI editor or
 | `alert_lookahead` | number | `12` | Hours ahead to scan for upcoming weather events (1-24). |
 | `forecast_entity` | string | `config.entity` | Separate entity to source the forecast array, if different from primary. |
 | `tap_action` | object | `{ action: 'more-info' }` | Standard Home Assistant action triggered on physical tap/click. |
+
+### AI usage disclosure
+I am a solo developer with experience in design and software architecture. However, my strenghts lie more in other languages like Python or TypeScript within React frameworks. 
+
+I came up with the design for this card some time ago. After that, I had LLMs like Gemini 3.1 Pro and Claude Opus 4.6 help me get the foundations for the animations and some of the logic right. SVG animation crafting is not something I am good at. I would say the code is about 30% me and 70% AI generated. I want to be clear on that. 
+
+However, I review everything that goes into the code, and I research every concept behind the code to understand what it does if I am not familiar with it. Having worked on larger projects at my job, I know what to look out for, what to challenge / push back on. I do not claim that this code is perfect. If you see something, open a new issue or create a PR - I'll be grateful for every contribution that makes this card better in any way possible.
