@@ -26,14 +26,21 @@ const formatTime = (date, localeObj = {}, configFormat = 'default') => {
   const lang = localeObj.language || navigator.language || 'en';
   const formatPref = (configFormat && configFormat !== 'default') ? configFormat : (localeObj.time_format || 'language');
   const options = { hour: '2-digit', minute: '2-digit' };
-  
+
   if (formatPref === '24') {
     options.hour12 = false;
     options.hourCycle = 'h23';
   } else if (formatPref === '12') {
     options.hour12 = true;
     options.hourCycle = 'h12';
+  } else if (formatPref === 'system') {
+    // 'system' means follow the OS/browser preference, which may differ from
+    // the language default (e.g. en-US language defaults to 12 h but an OS
+    // set to 24 h should produce 24 h output). Resolve it once from Intl.
+    const resolved = new Intl.DateTimeFormat().resolvedOptions();
+    options.hourCycle = resolved.hourCycle;
   }
+  // 'language' / unknown: leave hour12/hourCycle unset → Intl uses the locale default
 
   return new Intl.DateTimeFormat(lang, options).format(date);
 };
@@ -45,12 +52,14 @@ const FORECAST_ICONS = {
   'sunny': 'sun', 'clear-night': 'moon', 'partlycloudy': 'sun-cloud',
   'cloudy': 'cloud', 'fog': 'cloud', 'rainy': 'rain', 'pouring': 'rain',
   'snowy': 'snow', 'snowy-rainy': 'snow', 'hail': 'rain', 'lightning': 'lightning',
-  'lightning-rainy': 'lightning', 'windy': 'cloud', 'windy-variant': 'cloud', 'exceptional': 'sun'
+  'lightning-rainy': 'lightning', 'windy': 'cloud', 'windy-variant': 'cloud',
+  'exceptional': 'warning'
 };
 
 const STYLES = `
   :host { display: block; font-family: Roboto, -apple-system, sans-serif; isolation: isolate; }
-  ha-card { background: none !important; border: none !important; box-shadow: none !important; overflow: visible; cursor: pointer; }
+  ha-card { background: none !important; border: none !important; box-shadow: none !important; overflow: visible; }
+  ha-card[data-action]:not([data-action="none"]) { cursor: pointer; }
 
   .hero {
     position: relative;
@@ -61,6 +70,8 @@ const STYLES = `
     box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.15);
     transition: background 1.5s ease-in-out;
   }
+  .hero:focus { outline: 2px solid rgba(255,255,255,0.6); outline-offset: 2px; }
+  .hero:focus:not(:focus-visible) { outline: none; }
   .hero::after {
     content: ""; position: absolute; inset: 0;
     background: radial-gradient(circle at 80% 20%, rgba(255,255,255,0.1), transparent 50%);
@@ -95,6 +106,15 @@ const STYLES = `
   .hero-icon { position: relative; z-index: 5; flex-shrink: 0; margin-right: -4px; }
   .hero-icon svg { display: block; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.25)); }
   .error { padding: 16px; color: var(--error-color, #ef4444); font-size: 14px; }
+  .error-overlay {
+    display: none; position: absolute; inset: 0; z-index: 20;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.55); border-radius: inherit;
+    padding: 16px; color: var(--error-color, #ef4444); font-size: 13px;
+    text-align: center;
+  }
+  .error-overlay[hidden] { display: none !important; }
+  .error-overlay:not([hidden]) { display: flex; }
 
   .hero.lightning-flash::before {
     content: ''; position: absolute; inset: 0;
@@ -113,7 +133,9 @@ const STYLES = `
     box-shadow: 0 4px 10px rgba(0,0,0,0.05), inset 0 1px 0 rgba(255,255,255,0.05);
     transition: transform 0.2s ease, background 0.2s ease;
   }
-  .fc-day:hover { background: var(--secondary-background-color, rgba(255,255,255,0.1)); transform: translateY(-1px); }
+  @media (hover: hover) {
+    .fc-day:hover { background: var(--secondary-background-color, rgba(255,255,255,0.1)); transform: translateY(-1px); }
+  }
   .fc-d { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--secondary-text-color, #94a3b8); }
   .fc-icon { height: 28px; display: flex; align-items: center; justify-content: center; }
   .fc-t { font-size: 14px; font-weight: 500; color: var(--primary-text-color, #f8fafc); }
@@ -124,17 +146,44 @@ const STYLES = `
 
 class ModernWeatherCard extends HTMLElement {
 
+  /* ── Constructor ──────────────────────────────────────── */
+
+  constructor() {
+    super();
+    // Initialize instance state here so cleanup helpers are safe to call
+    // from setConfig even on first invocation (before any state exists).
+    this._activeTimeouts = new Set();
+    this._forecastUnsub = null;
+    this._hourlyUnsub = null;
+    this._subscribedEntity = null;
+    this._isConnected = false;
+    this._built = false;
+    this._lastStateHash = '';
+    this._lastSceneKey = '';
+    this._lightningActive = false;
+    this._forecast = [];
+    this._hourlyForecast = [];
+    this._subGeneration = 0;
+  }
+
   /* ── HA lifecycle ─────────────────────────────────────── */
 
   setConfig(config) {
     if (!config.entity) throw new Error('Please define a weather entity');
+
+    // Clean up any live state from a previous configuration before applying
+    // the new one. This prevents leaked subscriptions, orphaned timers, and
+    // stale forecast data when HA re-invokes setConfig (e.g. every keystroke
+    // in the visual editor).
+    this._clearAllTimeouts();
+    this._unsubForecast();
+
     this._config = {
       name: '',
       show_forecast: true,
       show_low_temp: false,
       show_no_temp: false,
       forecast_days: 5,
-      animated: true,
       sun_entity: 'sun.sun',
       time_format: 'default',
       alert_lookahead: 12,
@@ -142,45 +191,78 @@ class ModernWeatherCard extends HTMLElement {
       tap_action: { action: 'more-info' },
       ...config
     };
-    
+
     this._forecast = [];
     this._hourlyForecast = [];
-    this._subscribedEntity = null;
-    this._built = false;
-    this._isConnected = false;
     this._lastStateHash = '';
-    this._forecastUnsub = null;
-    this._hourlyUnsub = null;
-    this._activeTimeouts = new Set();
+    // Do NOT reset _isConnected: setConfig is called while the element IS
+    // connected (e.g. live editor) and connectedCallback will not fire again.
+    // Do NOT reset _built: the shadow root persists across reconfigures.
   }
 
   set hass(hass) {
+    const prev = this._hass;
     this._hass = hass;
     if (!this._built) this._build();
-    this._update();
+
+    // HA state objects are immutable: a reference equality check avoids
+    // rebuilding the state hash, running _getShortForecastText(), and
+    // diffing the forecast array on every unrelated state change in the
+    // instance (which fires several times per second on a busy dashboard).
+    const relevant =
+      !prev ||
+      prev.states[this._config?.entity]    !== hass.states[this._config?.entity] ||
+      prev.states[this._config?.sun_entity] !== hass.states[this._config?.sun_entity] ||
+      prev.locale !== hass.locale;
+
+    if (relevant) this._update();
     this._ensureForecastSub();
   }
 
-  connectedCallback() { 
+  connectedCallback() {
     this._isConnected = true;
-    this._ensureForecastSub(); 
+    this._ensureForecastSub();
+    // Restart the lightning scheduler if we were showing a thunderstorm when
+    // the element was detached (disconnectedCallback clears all timers).
+    if (this._lightningActive) this._scheduleLightning();
+    // Refresh the "Rain in X min" / "Rain until HH:MM" text every minute so
+    // the countdown stays current even on quiet instances with few state changes.
+    this._tickInterval = setInterval(() => {
+      this._lastStateHash = '';
+      this._update();
+    }, 60000);
   }
   
   disconnectedCallback() {
     this._isConnected = false;
     this._unsubForecast();
     this._clearAllTimeouts();
-    if (this._clickHandler) {
-      this.shadowRoot.querySelector('ha-card')?.removeEventListener('click', this._clickHandler);
-    }
+    clearInterval(this._tickInterval);
+    // Note: the click listener on the internal shadow-root element is NOT
+    // removed here. It targets an element inside our own shadow DOM, so it
+    // is garbage-collected with the component and cannot leak. Removing it
+    // would break tap actions permanently after the first view switch,
+    // because _build() only runs once and never re-adds it.
   }
 
-  static async getConfigElement() { 
+  static async getConfigElement() {
     await import('./modern-weather-card-editor.js');
-    return document.createElement('modern-weather-card-editor'); 
+    return document.createElement('modern-weather-card-editor');
   }
-  static getStubConfig()     { return { entity: 'weather.home', name: 'Modern', show_forecast: true, show_low_temp: false, time_format: 'default', alert_lookahead: 12 }; }
-  getCardSize() { return this._config?.show_forecast ? 5 : 3; }
+  static getStubConfig(hass) {
+    // Pick the first available weather entity rather than hardcoding
+    // 'weather.home', which only exists on some installs.
+    const entity = hass
+      ? Object.keys(hass.states).find(e => e.startsWith('weather.')) || 'weather.home'
+      : 'weather.home';
+    return { entity, name: 'Modern', show_forecast: true, show_low_temp: false, time_format: 'default', alert_lookahead: 12 };
+  }
+  getCardSize()    { return this._config?.show_forecast ? 5 : 3; }
+  getGridOptions() {
+    return this._config?.show_forecast
+      ? { rows: 4, columns: 12, min_rows: 4 }
+      : { rows: 2, columns: 12, min_rows: 2 };
+  }
 
   /* ── Memory Management Helpers ────────────────────────── */
 
@@ -201,18 +283,21 @@ class ModernWeatherCard extends HTMLElement {
   /* ── Build shadow DOM ─────────────────────────────────── */
 
   _build() {
-    if (this._built) return;
+    // Guard on the shadow root itself — not a flag — so that calling
+    // attachShadow a second time (which throws NotSupportedError) is
+    // impossible even if _built were ever reset.
+    if (this.shadowRoot) return;
     this._built = true;
 
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.innerHTML = `
       <style>${STYLES}</style>
-      <ha-card>
+      <ha-card role="button" tabindex="0">
         <div class="hero" id="hero">
-          <div class="stars" id="stars"></div>
-          <div class="scene-bg" id="sceneBg"></div>
-          <div class="weather-tint" id="weatherTint"></div>
-          <div class="weather-layer" id="weatherLayer"></div>
+          <div class="stars" id="stars" aria-hidden="true"></div>
+          <div class="scene-bg" id="sceneBg" aria-hidden="true"></div>
+          <div class="weather-tint" id="weatherTint" aria-hidden="true"></div>
+          <div class="weather-layer" id="weatherLayer" aria-hidden="true"></div>
           
           <div class="hero-text">
             <div class="loc" id="loc">
@@ -228,35 +313,40 @@ class ModernWeatherCard extends HTMLElement {
           </div>
           
           <div class="hero-icon" id="heroIcon"></div>
+          <div class="error-overlay" id="errorOverlay" hidden></div>
         </div>
         <div class="forecast" id="forecast"></div>
       </ha-card>
     `;
     
     this._clickHandler = () => this._handleAction(this._config.tap_action);
-    this.shadowRoot.querySelector('ha-card').addEventListener('click', this._clickHandler);
+    const card = this.shadowRoot.querySelector('ha-card');
+    card.addEventListener('click', this._clickHandler);
+    card.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        this._handleAction(this._config.tap_action);
+      }
+    });
   }
 
   /* ── Tap Actions ──────────────────────────────────────── */
 
   _handleAction(actionConfig) {
     if (!actionConfig || actionConfig.action === 'none') return;
-    
-    const action = actionConfig.action || 'more-info';
-    
-    if (action === 'more-info') {
-      const event = new Event('hass-more-info', { bubbles: true, composed: true });
-      event.detail = { entityId: actionConfig.entity || this._config.entity };
-      this.dispatchEvent(event);
-    } else if (action === 'navigate') {
-      window.history.pushState(null, '', actionConfig.navigation_path);
-      window.dispatchEvent(new Event('location-changed', { bubbles: true, composed: true }));
-    } else if (action === 'url') {
-      window.open(actionConfig.url_path, '_blank');
-    } else if (action === 'call-service') {
-      const [domain, service] = actionConfig.service.split('.');
-      this._hass.callService(domain, service, actionConfig.service_data || {});
-    }
+
+    // Fire the standard HA hass-action event so the platform handles
+    // haptic feedback, confirmation dialogs, hold/double-tap, and future
+    // action types automatically — without this card needing to maintain
+    // parity with every HA release.
+    this.dispatchEvent(new CustomEvent('hass-action', {
+      detail: {
+        config: { ...this._config, tap_action: actionConfig },
+        action: 'tap'
+      },
+      bubbles: true,
+      composed: true
+    }));
   }
 
   /* ── Update State & Render ────────────────────────────── */
@@ -266,17 +356,28 @@ class ModernWeatherCard extends HTMLElement {
     const entity = this._hass.states[this._config.entity];
     
     if (!entity) {
-      this.shadowRoot.getElementById('hero').innerHTML =
-        `<div class="error">Entity not found: ${this._config.entity}</div>`;
+      // Show error overlay without destroying the hero DOM structure so that
+      // the card can recover when the entity becomes available (e.g. after
+      // HA finishes booting). Use textContent — never innerHTML — to avoid
+      // stored-XSS from a crafted entity name in a shared dashboard.
+      const overlay = this.shadowRoot.getElementById('errorOverlay');
+      overlay.textContent = `Entity not found: ${this._config.entity}`;
+      overlay.removeAttribute('hidden');
+      // Reset hashes so the card fully re-renders once the entity appears.
+      this._lastStateHash = '';
+      this._lastSceneKey = '';
       return;
     }
+    this.shadowRoot.getElementById('errorOverlay').setAttribute('hidden', '');
 
     const currentCondition = entity.state;
     const numericTemp = entity.attributes.temperature != null ? Math.round(entity.attributes.temperature) : '--';
     const sunState = this._hass.states[this._config.sun_entity];
     const timeOfDay = this._getTimeOfDay(sunState);
     const weatherMeta = this._getWeatherMeta(currentCondition, timeOfDay);
-    const locationName = this._config.name || entity.attributes.friendly_name || '';
+    // Explicit empty string in config hides the location pin; fall back to
+    // friendly_name only when the key was not set at all (undefined).
+    const locationName = this._config.name !== undefined ? this._config.name : (entity.attributes.friendly_name || '');
 
     const todayForecast = (this._forecast || [])[0] || {};
     const highTemp = todayForecast.temperature != null ? Math.round(todayForecast.temperature) : '';
@@ -284,21 +385,38 @@ class ModernWeatherCard extends HTMLElement {
 
     const shortFcText = this._getShortForecastText(currentCondition);
 
-    // Fast scalar comparison to prevent DOM thrashing
-    const forecastCheck = this._forecast.slice(0, this._config.forecast_days).map(f => `${f.datetime}|${f.condition}|${f.temperature}|${f.templow}`).join(',');
-    const currentStateHash = `${currentCondition}|${numericTemp}|${timeOfDay}|${locationName}|${highTemp}|${lowTemp}|${shortFcText}|${forecastCheck}`;
+    // Deep compare to prevent DOM thrashing. Include the locale so that
+    // language or unit changes trigger a re-render even if state is unchanged.
+    const currentStateHash = JSON.stringify({
+      currentCondition, numericTemp, timeOfDay, locationName, highTemp, lowTemp,
+      shortFcText, locale: this._hass.locale,
+      forecast: this._forecast.slice(0, this._config.forecast_days)
+    });
 
     if (this._lastStateHash === currentStateHash) return;
     this._lastStateHash = currentStateHash;
 
+    // Keep aria-label current so screen readers announce the card correctly.
+    const ariaLabel = [locationName, weatherMeta.label, numericTemp !== '--' ? `${numericTemp}°` : '']
+      .filter(Boolean).join(', ');
+    const card = this.shadowRoot.querySelector('ha-card');
+    card.setAttribute('aria-label', ariaLabel);
+
+    const tapAction = this._config.tap_action?.action || 'more-info';
+    card.setAttribute('data-action', tapAction);
+    card.setAttribute('tabindex', tapAction !== 'none' ? '0' : '-1');
+    card.setAttribute('role', tapAction !== 'none' ? 'button' : 'region');
+
     const sceneKey = `${currentCondition}|${timeOfDay}`;
     const sceneChanged = sceneKey !== this._lastSceneKey;
-    if (sceneChanged) this._lastSceneKey = sceneKey;
-
-    const hero = this.{
+    if (sceneChanged) {
       this._lastSceneKey = sceneKey;
+      // Clear any pending lightning timers from the previous scene so they
+      // don't keep firing after a transition to, e.g., clear or fog.
       this._clearAllTimeouts();
-    }o');
+    }
+
+    const hero = this.shadowRoot.getElementById('hero');
     const skyPalette = this._getSkyPalette(timeOfDay);
     hero.style.background = skyPalette.length === 3
       ? `linear-gradient(135deg, ${skyPalette[0]}, ${skyPalette[1]}, ${skyPalette[2]})`
@@ -337,52 +455,57 @@ class ModernWeatherCard extends HTMLElement {
       const currentHour = new Date().getHours();
       if (currentHour >= 7 && currentHour < 18) return 'day';
       if (currentHour >= 18 && currentHour < 21) return 'dusk';
-      if (currentHour >= 5 && currentHour < 7)  return 'dawn';
+      if (currentHour >= 5  && currentHour < 7)  return 'dawn';
       return 'night';
     }
     const elevation = sunState.attributes.elevation;
-    const isRising = sunState.attributes.rising ?? false;
-    if (elevation > 12) return 'day';
+    const isRising  = sunState.attributes.rising ?? false;
+    // Use conventional twilight boundaries:
+    //   > 6°  → full day (avoids the card being stuck in dawn/dusk all day
+    //           at high latitudes in winter where the sun stays below 12°)
+    //  -6° – 6° → civil twilight (dawn or dusk depending on direction)
+    //   < -6° → night
+    if (elevation > 6)  return 'day';
     if (elevation > -6) return isRising ? 'dawn' : 'dusk';
     return 'night';
   }
 
-  /* ── Forecast Alter Calculation ───────────────────────── */
+  /* ── Forecast Alert Calculation ───────────────────────── */
 
   _getShortForecastText(currentCondition) {
     if (!this._hourlyForecast || this._hourlyForecast.length === 0) return '';
 
     const lookahead = this._config.alert_lookahead !== undefined ? this._config.alert_lookahead : 12;
     if (lookahead <= 0) return '';
-    
-    const now = new Date();
+
+    const now    = new Date();
     const cutoff = new Date(now.getTime() + lookahead * 3600000);
-    
+
     const notable = ['lightning-rainy', 'lightning', 'hail', 'pouring', 'rainy', 'snowy-rainy', 'snowy', 'windy-variant', 'windy'];
-    
+
     const getGroup = (c) => {
-      if (['rainy', 'pouring', 'lightning-rainy'].includes(c)) return 'rain';
+      if (['rainy', 'pouring', 'lightning-rainy', 'hail'].includes(c)) return 'rain';
       if (['snowy', 'snowy-rainy'].includes(c)) return 'snow';
       if (['windy', 'windy-variant'].includes(c)) return 'wind';
+      if (['lightning'].includes(c)) return 'thunder';
       return c;
     };
 
     const getCondName = (cond) => {
-      const trans = this._hass.localize(`component.weather.entity_component._.state.${cond}`) 
-                 || this._hass.localize(`component.weather.state._.${cond}`) 
-                 || cond.replace('-', ' ');
-      return trans.charAt(0).toUpperCase() + trans.slice(1);
+      // Delegate to the shared helper (issue 23) — fallback uses replaceAll
+      // so multi-hyphen conditions like 'lightning-rainy' render properly.
+      return this._localizeCondition(cond);
     };
 
     const currentNotable = notable.includes(currentCondition) ? currentCondition : null;
 
     for (const hour of this._hourlyForecast) {
       const targetTime = new Date(hour.datetime);
-      if (targetTime < now) continue; 
+      if (targetTime < now)    continue;
       if (targetTime > cutoff) break;
-      
+
       const isHourNotable = notable.includes(hour.condition);
-      
+
       if (currentNotable) {
         if (!isHourNotable || getGroup(hour.condition) !== getGroup(currentNotable)) {
           const timeStr = formatTime(targetTime, this._hass.locale, this._config.time_format);
@@ -390,10 +513,10 @@ class ModernWeatherCard extends HTMLElement {
         }
       } else {
         if (isHourNotable) {
-          const timeStr = formatTime(targetTime, this._hass.locale, this._config.time_format);
+          const timeStr  = formatTime(targetTime, this._hass.locale, this._config.time_format);
           const diffMins = Math.round((targetTime - now) / 60000);
           const condName = getCondName(hour.condition);
-          
+
           if (diffMins > 0 && diffMins < 60) {
             return getLocalText(this._hass.locale, 'alertIn', { condition: condName, mins: diffMins });
           }
@@ -401,6 +524,8 @@ class ModernWeatherCard extends HTMLElement {
         }
       }
     }
+    // If the current notable condition persists past the lookahead window
+    // there is no meaningful "until" time to show, so return empty.
     return '';
   }
 
@@ -468,18 +593,33 @@ class ModernWeatherCard extends HTMLElement {
         icon = 'moon'; 
         break;
       default:
-        if (isNight) icon = 'moon';
+        if (condition === 'exceptional') {
+          icon = 'warning';
+          tint = 'linear-gradient(180deg, rgba(120,53,15,0.4), rgba(180,83,9,0.2))';
+        } else if (isNight) icon = 'moon';
         else if (isDawn) { icon = 'sunrise'; sceneSvg = this._renderHorizon('dawn'); }
         else if (isDusk) { icon = 'sunset';  sceneSvg = this._renderHorizon('dusk'); }
         else icon = 'sun';
         break;
     }
     
-    const localizedLabel = this._hass.localize(`component.weather.entity_component._.state.${condition}`) 
-                           || this._hass.localize(`component.weather.state._.${condition}`)
-                           || condition.replace('-', ' ');
+    const localizedLabel = this._localizeCondition(condition);
 
     return { icon, tint, sceneSvg, label: localizedLabel };
+  }
+
+  /**
+   * Shared condition-localization helper used by _getWeatherMeta and
+   * _getShortForecastText. Falls back to a human-readable version of the
+   * HA condition slug, using replaceAll so multi-hyphen slugs (e.g.
+   * 'lightning-rainy') have every hyphen replaced.
+   */
+  _localizeCondition(condition) {
+    const raw =
+      this._hass.localize(`component.weather.entity_component._.state.${condition}`) ||
+      this._hass.localize(`component.weather.state._.${condition}`) ||
+      condition.replaceAll('-', ' ');
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
   }
 
   /* ── Background Layer Rendering ───────────────────────── */
@@ -494,21 +634,27 @@ class ModernWeatherCard extends HTMLElement {
   }
 
   _renderLayeredSnow() {
+    // Three depth layers: large/slow foreground → small/fast background.
+    // count = flakes per layer, duration = fall time in seconds,
+    // drift = horizontal sway in viewBox units.
     const snowLayers = [
       { count: 4, minRadius: 1.8, maxRadius: 2.8, duration: 4,  opacity: 0.9,  drift: 8  },
       { count: 6, minRadius: 1.0, maxRadius: 1.8, duration: 7,  opacity: 0.5,  drift: 5  },
       { count: 8, minRadius: 0.5, maxRadius: 1.0, duration: 11, opacity: 0.25, drift: 3  },
     ];
-    
+
     let svgOutput = '';
-    
+
     snowLayers.forEach((layer, layerIndex) => {
       for (let i = 0; i < layer.count; i++) {
-        const xPos = 5 + ((i * 41 + layerIndex * 17 + 7) % 90);
+        // Deterministic pseudo-random spread using prime-multiplier hashing so
+        // that re-renders are stable (no Math.random in layout paths) and
+        // flakes are visually well-distributed without clustering.
+        const xPos = 5 + ((i * 41 + layerIndex * 17 + 7) % 90);  // x in [5, 95] viewBox units
         const radius = layer.minRadius + ((i * 13 + layerIndex * 7) % 10) / 10 * (layer.maxRadius - layer.minRadius);
-        const animationDuration = layer.duration + ((i * 7) % 4) * 0.5;
-        const driftX = layer.drift * (((i + layerIndex) % 2) ? 1 : -1);
-        const delay = ((i * 11 + layerIndex * 5) % 10) * 0.3;
+        const animationDuration = layer.duration + ((i * 7) % 4) * 0.5; // ±2 s jitter
+        const driftX = layer.drift * (((i + layerIndex) % 2) ? 1 : -1); // alternate left/right
+        const delay = ((i * 11 + layerIndex * 5) % 10) * 0.3; // stagger up to 3 s
         
         svgOutput += `<circle cx="${xPos}" cy="0" r="${radius.toFixed(1)}" fill="#f0f4f8" opacity="0">
           <animateTransform attributeName="transform" type="translate"
@@ -676,6 +822,16 @@ class ModernWeatherCard extends HTMLElement {
             <path d="M35,25 A24,24 0 1,0 65,58 A19,19 0 1,1 35,25 Z" fill="#fff" opacity="0.12"/></g>
         </svg>`;
 
+      case 'warning':
+        return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">${svgDefs}
+          <g filter="url(#iconGlow)">
+            <polygon points="50,8 94,88 6,88" fill="#f59e0b" opacity="0.9">
+              <animate attributeName="opacity" values="0.9;0.6;0.9" dur="2s" repeatCount="indefinite"/>
+            </polygon>
+            <text x="50" y="74" text-anchor="middle" font-size="38" font-weight="bold" fill="#1c1917">!</text>
+          </g>
+        </svg>`;
+
       case 'sunrise': 
       case 'sunset': {
         const isSunset = weatherType === 'sunset';
@@ -711,23 +867,28 @@ class ModernWeatherCard extends HTMLElement {
   }
 
   _generateRainDrops(count) {
-    const cloudBottom = 73;
-    const xMin = 18, xSpan = 64;
+    const cloudBottom = 73; // y start just below the cloud path (viewBox units)
+    const xMin = 18, xSpan = 64; // horizontal spread band
+    // Three depth layers: thin/fast background → thick/slow foreground.
+    // speed = fall duration in seconds, length = drop streak length in viewBox units.
     const rainLayers = [
-      { dropCount: Math.ceil(count * 0.3), strokeWidth: 0.4, opacity: 0.14, speed: 1.3, length: 4 },
-      { dropCount: Math.ceil(count * 0.45),strokeWidth: 0.6, opacity: 0.25, speed: 0.85,length: 6 },
-      { dropCount: Math.ceil(count * 0.25),strokeWidth: 0.9, opacity: 0.38, speed: 0.55,length: 8 },
+      { dropCount: Math.ceil(count * 0.3),  strokeWidth: 0.4, opacity: 0.14, speed: 1.3,  length: 4 },
+      { dropCount: Math.ceil(count * 0.45), strokeWidth: 0.6, opacity: 0.25, speed: 0.85, length: 6 },
+      { dropCount: Math.ceil(count * 0.25), strokeWidth: 0.9, opacity: 0.38, speed: 0.55, length: 8 },
     ];
     let dropsSvg = '', splashesSvg = '';
-    
+
     rainLayers.forEach((layer, layerIndex) => {
       for (let i = 0; i < layer.dropCount; i++) {
+        // Prime-multiplier hashing produces deterministic pseudo-random positions
+        // that are stable across re-renders (no Math.random in layout paths)
+        // and visually well-distributed without visible clustering.
         const xPos = xMin + ((i * 31 + layerIndex * 19 + 7) % xSpan);
-        const yPos = cloudBottom + ((i * 7 + layerIndex * 3) % 5);
-        const duration = layer.speed + ((i * 11) % 5) * 0.06;
-        const delay = ((i * 17 + layerIndex * 13) % 18) * 0.06;
-        const drift = -1 - layerIndex;
-        const fallDistance = 48;
+        const yPos = cloudBottom + ((i * 7 + layerIndex * 3) % 5); // \u00b12.5 u y stagger
+        const duration = layer.speed + ((i * 11) % 5) * 0.06;      // small speed jitter
+        const delay = ((i * 17 + layerIndex * 13) % 18) * 0.06;    // stagger up to ~1 s
+        const drift = -1 - layerIndex; // slight left drift, more per background layer
+        const fallDistance = 48; // viewBox units to fall before looping
         
         dropsSvg += `<line x1="${xPos}" y1="${yPos}" x2="${xPos + drift}" y2="${yPos + layer.length}"
           stroke="rgba(180,215,250,${layer.opacity})" stroke-width="${layer.strokeWidth}" stroke-linecap="round" opacity="0">
@@ -745,12 +906,12 @@ class ModernWeatherCard extends HTMLElement {
       const splashDuration = 0.45 + ((i * 7) % 4) * 0.1;
       const splashDelay = ((i * 11) % 14) * 0.08;
       
-      splashesSvg += `<ellipse cx="${splashX}" cy="118" rx="0" ry="0" fill="none" stroke="rgba(210,230,255,0.5)" stroke-width="0.5">
+      splashesSvg += `<ellipse cx="${splashX}" cy="97" rx="0" ry="0" fill="none" stroke="rgba(210,230,255,0.5)" stroke-width="0.5">
         <animate attributeName="rx" values="0;3;0" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
         <animate attributeName="ry" values="0;0.8;0" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
         <animate attributeName="stroke-opacity" values="0.5;0;0.5" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
       </ellipse>
-      <circle cx="${splashX}" cy="118" r="0.5" fill="rgba(210,230,255,0.45)" opacity="0">
+      <circle cx="${splashX}" cy="97" r="0.5" fill="rgba(210,230,255,0.45)" opacity="0">
         <animateTransform attributeName="transform" type="translate"
           from="0,0" to="${((i%2)?1.5:-1.5)},-4" dur="${splashDuration*0.4}s" begin="${splashDelay}s" repeatCount="indefinite"/>
         <animate attributeName="opacity" values="0;0.6;0" dur="${splashDuration*0.4}s" begin="${splashDelay}s" repeatCount="indefinite"/>
@@ -777,7 +938,7 @@ class ModernWeatherCard extends HTMLElement {
     for (let i = 0; i < 4; i++) {
         const splashX = 25 + ((i * 19 + 5) % 50);
         const splashDelay = ((i * 13) % 8) * 0.12;
-        hailOutput += `<circle cx="${splashX}" cy="118" r="0" fill="#dce4ed" opacity="0.5">
+        hailOutput += `<circle cx="${splashX}" cy="97" r="0" fill="#dce4ed" opacity="0.5">
           <animate attributeName="r" values="0;2.5;0" dur="0.5s" begin="${splashDelay}s" repeatCount="indefinite"/>
           <animate attributeName="opacity" values="0.6;0;0.6" dur="0.5s" begin="${splashDelay}s" repeatCount="indefinite"/>
         </circle>`;
@@ -826,14 +987,22 @@ class ModernWeatherCard extends HTMLElement {
     const sliceCount = this._config.forecast_days;
     const viewableForecast = this._forecast.slice(0, sliceCount);
     const locale = this._hass.locale?.language || 'en';
-    
+    const todayDateStr = new Date().toDateString();
+
     let htmlOutput = '';
-    
-    viewableForecast.forEach((dayData) => {
+
+    viewableForecast.forEach((dayData, index) => {
         const matchingIconKey = FORECAST_ICONS[dayData.condition] || 'sun';
-        const dayLabel = formatDayLabel(new Date(dayData.datetime), locale);
+        const fcDate = new Date(dayData.datetime);
+        // Label the first entry "Today" when it falls on the current calendar
+        // day; otherwise use the weekday abbreviation.
+        const isToday = index === 0 && fcDate.toDateString() === todayDateStr;
+        const dayLabel = isToday
+          ? (this._hass.localize('ui.components.calendar.event.today') || 'Today')
+          : formatDayLabel(fcDate, locale);
         
-        const stringHigh = this._config.show_no_temp ? '' : `${Math.round(dayData.temperature)}°`;
+        const stringHigh = this._config.show_no_temp ? '' :
+          (dayData.temperature != null ? `${Math.round(dayData.temperature)}°` : '');
         const stringLow = (this._config.show_low_temp && dayData.templow != null && !this._config.show_no_temp)
                  ? `<span class="fc-lo">${Math.round(dayData.templow)}°</span>` : '';
                  
@@ -858,6 +1027,7 @@ class ModernWeatherCard extends HTMLElement {
       case 'rain': return `<svg width="${size}" height="${size}" viewBox="0 0 32 32"><path d="M8,18 C8,15 11,13 14,13 C16,10 21,10 23,13 C26,13 28,15 28,18 C28,21 26,22 24,22L8,22Z" fill="#94a3b8"/><line x1="13" y1="25" x2="11" y2="29" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round"/><line x1="19" y1="25" x2="17" y2="29" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round"/></svg>`;
       case 'snow': return `<svg width="${size}" height="${size}" viewBox="0 0 32 32"><path d="M8,18 C8,15 11,13 14,13 C16,10 21,10 23,13 C26,13 28,15 28,18 C28,21 26,22 24,22L8,22Z" fill="#94a3b8"/><circle cx="13" cy="26" r="1" fill="#fff"/><circle cx="19" cy="27" r="1" fill="#fff"/></svg>`;
       case 'lightning': return `<svg width="${size}" height="${size}" viewBox="0 0 32 32"><path d="M8,16 C8,13 11,11 14,11 C16,8 21,8 23,11 C26,11 28,13 28,16 C28,19 26,20 24,20L8,20Z" fill="#475569"/><polygon points="17,18 13,24 16,24 14,30 21,22 18,22" fill="#fde047"/></svg>`;
+      case 'warning': return `<svg width="${size}" height="${size}" viewBox="0 0 32 32"><polygon points="16,3 30,28 2,28" fill="#f59e0b"/><text x="16" y="24" text-anchor="middle" font-size="14" font-weight="bold" fill="#1c1917">!</text></svg>`;
       default: return `<svg width="${size}" height="${size}" viewBox="0 0 32 32"><circle cx="16" cy="16" r="6" fill="#888"/></svg>`;
     }
   }
@@ -868,51 +1038,80 @@ class ModernWeatherCard extends HTMLElement {
     if (!this._hass?.connection || !this._config?.entity) return;
     const targetSub = `${this._config.entity}|${this._config.forecast_entity}`;
     if (this._subscribedEntity === targetSub) return;
+
+    // Mark the target before the first await so that concurrent calls
+    // (hass setter racing with connectedCallback) are de-duplicated.
+    // If a subscription attempt fails, _subscribedEntity is cleared so
+    // the next hass update triggers a retry automatically.
     this._unsubForecast();
     this._subscribedEntity = targetSub;
 
+    // Capture a generation token before any await; compare after to detect
+    // concurrent reconfigures and discard stale results.
+    const generation = ++this._subGeneration;
+
+    // Always attempt the daily forecast subscription regardless of the entity's
+    // supported_features value. The WeatherEntityFeature.FORECAST_DAILY (16) and
+    // FORECAST_HOURLY (32) bits were added in HA 2023.9; older integrations report
+    // values like 1, 2, 3, 6 that do not include these bits but still support the
+    // subscription API in practice. Pre-filtering by supported_features caused both
+    // subscriptions and the legacy-attribute fallback to be silently skipped for
+    // the majority of real-world entities. Failures are caught below.
     try {
-      this._forecastUnsub = await this._hass.connection.subscribeMessage(
-        (msg) => { 
-            this._forecast = msg.forecast || []; 
-            if (this._isConnected) this._update(); 
+      const unsub = await this._hass.connection.subscribeMessage(
+        (msg) => {
+          this._forecast = msg.forecast || [];
+          if (this._isConnected) this._update();
         },
         { type: 'weather/subscribe_forecast', forecast_type: 'daily', entity_id: this._config.forecast_entity }
       );
-      // Validate that component wasn't destroyed while promise was resolving
-      if (!this._isConnected && this._forecastUnsub) {
-          this._forecastUnsub();
-          this._forecastUnsub = null;
+
+      if (generation !== this._subGeneration || !this._isConnected) {
+        // A newer subscription or a disconnect happened while we were waiting.
+        // Discard this one and reset so the next call can retry cleanly.
+        unsub();
+        if (generation === this._subGeneration) this._subscribedEntity = null;
+      } else {
+        this._forecastUnsub = unsub;
       }
     } catch (e) {
-      const weatherEntityFallback = this._hass.states[this._config.forecast_entity];
-      if (weatherEntityFallback?.attributes?.forecast) { 
-          this._forecast = weatherEntityFallback.attributes.forecast; 
-          if (this._isConnected) this._update(); 
+      // Subscription not supported or connection error. Clear sentinel so the
+      // next hass update retries. Fall back to legacy entity attribute forecast.
+      void e;
+      if (generation === this._subGeneration) this._subscribedEntity = null;
+      const fallback = this._hass.states[this._config.forecast_entity];
+      if (fallback?.attributes?.forecast) {
+        this._forecast = fallback.attributes.forecast;
+        if (this._isConnected) this._update();
       }
     }
 
     try {
-      this._hourlyUnsub = await this._hass.connection.subscribeMessage(
-        (msg) => { 
-            this._hourlyForecast = msg.forecast || []; 
-            if (this._isConnected) this._update(); 
+      const unsub = await this._hass.connection.subscribeMessage(
+        (msg) => {
+          this._hourlyForecast = msg.forecast || [];
+          if (this._isConnected) this._update();
         },
         { type: 'weather/subscribe_forecast', forecast_type: 'hourly', entity_id: this._config.forecast_entity }
       );
-      // Validate that component wasn't destroyed while promise was resolving
-      if (!this._isConnected && this._hourlyUnsub) {
-          this._hourlyUnsub();
-          this._hourlyUnsub = null;
+
+      if (generation !== this._subGeneration || !this._isConnected) {
+        unsub();
+      } else {
+        this._hourlyUnsub = unsub;
       }
     } catch (e) {
+      // Hourly forecast not supported by this entity — not an error condition.
+      void e;
       this._hourlyForecast = [];
     }
   }
 
   _unsubForecast() {
     if (this._forecastUnsub) { this._forecastUnsub(); this._forecastUnsub = null; }
-    if (this._hourlyUnsub) { this._hourlyUnsub(); this._hourlyUnsub = null; }
+    if (this._hourlyUnsub)   { this._hourlyUnsub();   this._hourlyUnsub = null;   }
+    // Always reset the sentinel so the next _ensureForecastSub() call does
+    // not short-circuit on a stale value (e.g. after a cancelled-on-detach sub).
     this._subscribedEntity = null;
   }
 }
@@ -923,6 +1122,12 @@ class ModernWeatherCard extends HTMLElement {
 /* ── Registration ─────────────────────────────────────── */
 
 customElements.define('modern-weather-card', ModernWeatherCard);
-window.customCards = window.customCards || [];
-window.customCards.push({ type: 'modern-weather-card', name: 'Modern Weather Card', description: 'Layered weather card with atmospheric effects', preview: true });
+globalThis.customCards = globalThis.customCards || [];
+globalThis.customCards.push({
+  type: 'modern-weather-card',
+  name: 'Modern Weather Card',
+  description: 'Layered weather card with atmospheric effects',
+  documentationURL: 'https://github.com/mwckr/homassistant-modern-weather-card',
+  preview: true
+});
 console.info('%c MODERN-WEATHER %c v0.1.0 ','background:#2563eb;color:#fff;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px','background:#0f172a;color:#f8fafc;padding:2px 6px;border-radius:0 4px 4px 0');
