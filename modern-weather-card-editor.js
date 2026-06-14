@@ -6,9 +6,7 @@ class ModernWeatherCardEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    // Call _render() here too: HA does not guarantee that hass is set before
-    // setConfig, so the first render attempt in setConfig may be a no-op.
-    // _render() guards against double-initialisation, so this is safe.
+    // hass may arrive before or after setConfig; render handles both
     this._render();
   }
 
@@ -43,6 +41,10 @@ class ModernWeatherCardEditor extends HTMLElement {
           }
         },
         {
+          name: 'forecast_days',
+          selector: { number: { min: 1, max: 7, mode: 'slider', step: 1 } }
+        },
+        {
           name: 'alert_lookahead',
           selector: { number: { min: 0, max: 24, mode: 'slider', step: 1 } }
         },
@@ -55,8 +57,7 @@ class ModernWeatherCardEditor extends HTMLElement {
             { name: 'show_no_temp',  selector: { boolean: {} } }
           ]
         },
-        // Tap action via the supported ui_action selector — avoids depending on
-        // the internal and undocumented hui-action-editor element.
+        // ui_action selector for tap action config
         { name: 'tap_action', selector: { ui_action: {} } }
       ];
 
@@ -66,6 +67,7 @@ class ModernWeatherCardEditor extends HTMLElement {
           case 'forecast_entity':  return 'Forecast Entity (Optional)';
           case 'sun_entity':       return 'Sun Entity';
           case 'time_format':      return 'Time Format Override';
+          case 'forecast_days':    return 'Forecast Days';
           case 'alert_lookahead':  return 'Forecast Alert Lookahead (Hours, 0 = off)';
           case 'name':             return 'Location Name';
           case 'show_forecast':    return 'Show forecast';
@@ -77,9 +79,7 @@ class ModernWeatherCardEditor extends HTMLElement {
       };
 
       this._form.addEventListener('value-changed', (ev) => {
-        // Stop propagation before firing our own event so that HA's dialog
-        // doesn't also see the raw value-changed from the inner ha-form,
-        // which could cause double-handling in future HA releases.
+        // stop propagation to prevent HA dialog double-handling
         ev.stopPropagation();
         this._fireChanged(ev.detail.value);
       });
