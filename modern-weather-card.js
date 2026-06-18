@@ -577,13 +577,18 @@ class ModernWeatherCard extends HTMLElement {
   // background weather layers
 
   _renderWeatherLayer(condition) {
-    switch (condition) {
-      case 'snowy':           
-      case 'snowy-rainy':     return this._renderLayeredSnow();
-      case 'fog':             return this._renderVolumetricFog();
-      default:                return '';
+      switch (condition) {
+        case 'rainy':
+        case 'pouring':
+        case 'lightning':
+        case 'lightning-rainy':
+        case 'hail':            return this._renderRainSplashes(condition === 'pouring' ? 10 : 6);
+        case 'snowy':           
+        case 'snowy-rainy':     return this._renderLayeredSnow();
+        case 'fog':             return this._renderVolumetricFog();
+        default:                return '';
+      }
     }
-  }
 
   _renderLayeredSnow() {
     // three depth layers: large/slow foreground to small/fast background
@@ -635,6 +640,27 @@ class ModernWeatherCard extends HTMLElement {
         </ellipse>
       </g>
     </svg>`;
+  }
+
+  _renderRainSplashes(count) {
+    const xMin = 76, xSpan = 17;
+    let svg = '';
+    for (let i = 0; i < count; i++) {
+      const splashX = xMin + ((i * 23 + 5) % xSpan);
+      const splashDuration = 0.45 + ((i * 7) % 4) * 0.1;
+      const splashDelay = ((i * 11) % 14) * 0.08;
+      svg += `<ellipse cx="${splashX}" cy="95" rx="0" ry="0" fill="none" stroke="rgba(210,230,255,0.5)" stroke-width="0.4">
+        <animate attributeName="rx" values="0;3;0" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
+        <animate attributeName="ry" values="0;0.8;0" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-opacity" values="0.5;0;0.5" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
+      </ellipse>
+      <circle cx="${splashX}" cy="95" r="0.4" fill="rgba(210,230,255,0.45)" opacity="0">
+        <animateTransform attributeName="transform" type="translate"
+          from="0,0" to="${((i%2)?1.5:-1.5)},-3.5" dur="${splashDuration*0.4}s" begin="${splashDelay}s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;0.6;0" dur="${splashDuration*0.4}s" begin="${splashDelay}s" repeatCount="indefinite"/>
+      </circle>`;
+    }
+    return `<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" xmlns="http://www.w3.org/2000/svg">${svg}</svg>`;
   }
 
   // lightning
@@ -833,7 +859,7 @@ class ModernWeatherCard extends HTMLElement {
         const duration = layer.speed + ((i * 11) % 5) * 0.06;
         const delay = ((i * 17 + layerIndex * 13) % 18) * 0.06;
         const drift = -1 - layerIndex;
-        const fallDistance = 48;
+        const fallDistance = 80;
         
         dropsSvg += `<line x1="${xPos}" y1="${yPos}" x2="${xPos + drift}" y2="${yPos + layer.length}"
           stroke="rgba(180,215,250,${layer.opacity})" stroke-width="${layer.strokeWidth}" stroke-linecap="round" opacity="0">
@@ -862,8 +888,8 @@ class ModernWeatherCard extends HTMLElement {
         <animate attributeName="opacity" values="0;0.6;0" dur="${splashDuration*0.4}s" begin="${splashDelay}s" repeatCount="indefinite"/>
       </circle>`;
     }
-    return `<g>${dropsSvg}${splashesSvg}</g>`;
-  }
+    return `<g>${dropsSvg}</g>`;
+    }
 
   _generateHailStones() {
     let hailOutput = '';
