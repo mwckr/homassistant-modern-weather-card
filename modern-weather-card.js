@@ -1,4 +1,4 @@
-// Modern Weather Card v0.1.1
+// Modern Weather Card v0.1.2
 
 const CUSTOM_STRINGS = {
   en: { alertUntil: '{condition} until {time}', alertIn: '{condition} in {mins} min', alertFrom: '{condition} from {time}' },
@@ -144,6 +144,14 @@ const STYLES = `
   .fc-lo { font-size: 11px; font-weight: 400; color: var(--secondary-text-color, #64748b); margin-top: -2px; }
 `;
 
+const SVG_DEFS = `<defs>
+  <filter id="iconGlow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="5" result="b"/><feComposite in="SourceGraphic" in2="b" operator="over"/></filter>
+  <linearGradient id="sunGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#fffbeb"/><stop offset="30%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#ea580c"/></linearGradient>
+  <linearGradient id="cloudFront" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#cbd5e1"/></linearGradient>
+  <linearGradient id="cloudBack" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#94a3b8" stop-opacity="0.6"/><stop offset="100%" stop-color="#475569" stop-opacity="0.6"/></linearGradient>
+  <linearGradient id="moonGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient>
+</defs>`;
+
 // main component
 
 class ModernWeatherCard extends HTMLElement {
@@ -208,7 +216,8 @@ class ModernWeatherCard extends HTMLElement {
       !prev ||
       prev.states[this._config?.entity]    !== hass.states[this._config?.entity] ||
       prev.states[this._config?.sun_entity] !== hass.states[this._config?.sun_entity] ||
-      prev.locale !== hass.locale;
+      prev.locale?.language !== hass.locale?.language ||
+      prev.locale?.time_format !== hass.locale?.time_format;
 
     if (relevant) this._update();
     this._ensureForecastSub();
@@ -236,7 +245,15 @@ class ModernWeatherCard extends HTMLElement {
   }
 
   static async getConfigElement() {
-    await import('./modern-weather-card-editor.js');
+    if (!customElements.get('modern-weather-card-editor')) {
+      try {
+        await import('./modern-weather-card-editor.js');
+      } catch {
+        // editor module failed to load — log and fall back to YAML editor
+        console.warn('modern-weather-card: editor module not found, falling back to YAML editor');
+        return undefined;
+      }
+    }
     return document.createElement('modern-weather-card-editor');
   }
   static getStubConfig(hass) {
@@ -307,9 +324,25 @@ class ModernWeatherCard extends HTMLElement {
     `;
     
     this._clickHandler = () => this._handleAction(this._config.tap_action);
-    const card = this.shadowRoot.querySelector('ha-card');
-    card.addEventListener('click', this._clickHandler);
-    card.addEventListener('keydown', (ev) => {
+    this._els = {
+      card:         this.shadowRoot.querySelector('ha-card'),
+      hero:         this.shadowRoot.getElementById('hero'),
+      stars:        this.shadowRoot.getElementById('stars'),
+      sceneBg:      this.shadowRoot.getElementById('sceneBg'),
+      weatherTint:  this.shadowRoot.getElementById('weatherTint'),
+      weatherLayer: this.shadowRoot.getElementById('weatherLayer'),
+      heroIcon:     this.shadowRoot.getElementById('heroIcon'),
+      locIcon:      this.shadowRoot.getElementById('locIcon'),
+      locName:      this.shadowRoot.getElementById('locName'),
+      temp:         this.shadowRoot.getElementById('temp'),
+      cond:         this.shadowRoot.getElementById('cond'),
+      shortFc:      this.shadowRoot.getElementById('shortFc'),
+      forecast:     this.shadowRoot.getElementById('forecast'),
+      errorOverlay: this.shadowRoot.getElementById('errorOverlay'),
+    };
+
+    this._els.card.addEventListener('click', this._clickHandler);
+    this._els.card.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
         this._handleAction(this._config.tap_action);
@@ -341,15 +374,14 @@ class ModernWeatherCard extends HTMLElement {
     
     if (!entity) {
       // show error overlay; uses textContent to prevent XSS
-      const overlay = this.shadowRoot.getElementById('errorOverlay');
-      overlay.textContent = `Entity not found: ${this._config.entity}`;
-      overlay.removeAttribute('hidden');
+      this._els.errorOverlay.textContent = `Entity not found: ${this._config.entity}`;
+      this._els.errorOverlay.removeAttribute('hidden');
       // reset hashes so card re-renders when entity appears
       this._lastStateHash = '';
       this._lastSceneKey = '';
       return;
     }
-    this.shadowRoot.getElementById('errorOverlay').setAttribute('hidden', '');
+    this._els.errorOverlay.setAttribute('hidden', '');
 
     const currentCondition = entity.state;
     const rawTemp = entity.attributes.temperature;
@@ -379,13 +411,12 @@ class ModernWeatherCard extends HTMLElement {
     // keep aria-label current for screen readers
     const ariaLabel = [locationName, weatherMeta.label, numericTemp != null ? `${numericTemp}°` : '']
       .filter(Boolean).join(', ');
-    const card = this.shadowRoot.querySelector('ha-card');
-    card.setAttribute('aria-label', ariaLabel);
+    this._els.card.setAttribute('aria-label', ariaLabel);
 
     const tapAction = this._config.tap_action?.action || 'more-info';
-    card.setAttribute('data-action', tapAction);
-    card.setAttribute('tabindex', tapAction !== 'none' ? '0' : '-1');
-    card.setAttribute('role', tapAction !== 'none' ? 'button' : 'region');
+    this._els.card.setAttribute('data-action', tapAction);
+    this._els.card.setAttribute('tabindex', tapAction !== 'none' ? '0' : '-1');
+    this._els.card.setAttribute('role', tapAction !== 'none' ? 'button' : 'region');
 
     const sceneKey = `${currentCondition}|${timeOfDay}`;
     const sceneChanged = sceneKey !== this._lastSceneKey;
@@ -395,33 +426,32 @@ class ModernWeatherCard extends HTMLElement {
       this._clearAllTimeouts();
     }
 
-    const hero = this.shadowRoot.getElementById('hero');
     const skyPalette = this._getSkyPalette(timeOfDay);
-    hero.style.background = skyPalette.length === 3
+    this._els.hero.style.background = skyPalette.length === 3
       ? `linear-gradient(135deg, ${skyPalette[0]}, ${skyPalette[1]}, ${skyPalette[2]})`
       : `linear-gradient(135deg, ${skyPalette[0]}, ${skyPalette[1]})`;
 
     if (sceneChanged) {
       const isNight = (timeOfDay === 'night');
-      this.shadowRoot.getElementById('stars').innerHTML = isNight ? this._renderStars() : '';
-      this.shadowRoot.getElementById('sceneBg').innerHTML = weatherMeta.sceneSvg || '';
-      this.shadowRoot.getElementById('weatherTint').style.background = weatherMeta.tint || 'none';
-      this.shadowRoot.getElementById('weatherLayer').innerHTML = this._renderWeatherLayer(currentCondition);
-      this.shadowRoot.getElementById('heroIcon').innerHTML = this._generateWeatherIconSVG(weatherMeta.icon, 120);
+      this._els.stars.innerHTML = isNight ? this._renderStars() : '';
+      this._els.sceneBg.innerHTML = weatherMeta.sceneSvg || '';
+      this._els.weatherTint.style.background = weatherMeta.tint || 'none';
+      this._els.weatherLayer.innerHTML = this._renderWeatherLayer(currentCondition);
+      this._els.heroIcon.innerHTML = this._generateWeatherIconSVG(weatherMeta.icon, 120);
       this._manageLightning(currentCondition);
     }
 
-    this.shadowRoot.getElementById('locIcon').innerHTML = locationName 
+    this._els.locIcon.innerHTML = locationName 
       ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>` 
       : '';
-    this.shadowRoot.getElementById('locName').textContent = locationName;
+    this._els.locName.textContent = locationName;
     
-    this.shadowRoot.getElementById('temp').textContent = numericTemp != null ? `${numericTemp}°` : '--';
-    this.shadowRoot.getElementById('cond').textContent = highTemp !== ''
+    this._els.temp.textContent = numericTemp != null ? `${numericTemp}°` : '--';
+    this._els.cond.textContent = highTemp !== ''
       ? `${weatherMeta.label} · ${highTemp}°${lowTemp !== '' ? ' / ' + lowTemp + '°' : ''}`
       : weatherMeta.label;
 
-    this.shadowRoot.getElementById('shortFc').textContent = shortFcText;
+    this._els.shortFc.textContent = shortFcText;
 
     this._renderForecast();
   }
@@ -685,7 +715,7 @@ class ModernWeatherCard extends HTMLElement {
   }
 
   _triggerFlash() {
-    const hero = this.shadowRoot?.getElementById('hero');
+    const hero = this._els?.hero;
     if (!hero) return;
     
     hero.classList.add('lightning-flash');
@@ -702,13 +732,7 @@ class ModernWeatherCard extends HTMLElement {
   // weather icon SVGs
 
   _generateWeatherIconSVG(weatherType, size = 100) {
-    const svgDefs = `<defs>
-      <filter id="iconGlow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="5" result="b"/><feComposite in="SourceGraphic" in2="b" operator="over"/></filter>
-      <linearGradient id="sunGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#fffbeb"/><stop offset="30%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#ea580c"/></linearGradient>
-      <linearGradient id="cloudFront" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#cbd5e1"/></linearGradient>
-      <linearGradient id="cloudBack" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#94a3b8" stop-opacity="0.6"/><stop offset="100%" stop-color="#475569" stop-opacity="0.6"/></linearGradient>
-      <linearGradient id="moonGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient>
-    </defs>`;
+    const svgDefs = SVG_DEFS;
 
     switch (weatherType) {
       case 'sun':
@@ -849,7 +873,7 @@ class ModernWeatherCard extends HTMLElement {
       { dropCount: Math.ceil(count * 0.45), strokeWidth: 0.6, opacity: 0.25, speed: 0.85, length: 6 },
       { dropCount: Math.ceil(count * 0.25), strokeWidth: 0.9, opacity: 0.38, speed: 0.55, length: 8 },
     ];
-    let dropsSvg = '', splashesSvg = '';
+    let dropsSvg = '';
 
     rainLayers.forEach((layer, layerIndex) => {
       for (let i = 0; i < layer.dropCount; i++) {
@@ -871,25 +895,8 @@ class ModernWeatherCard extends HTMLElement {
       }
     });
 
-    const splashCount = Math.min(count, 8);
-    for (let i = 0; i < splashCount; i++) {
-      const splashX = xMin + ((i * 23 + 5) % xSpan);
-      const splashDuration = 0.45 + ((i * 7) % 4) * 0.1;
-      const splashDelay = ((i * 11) % 14) * 0.08;
-      
-      splashesSvg += `<ellipse cx="${splashX}" cy="97" rx="0" ry="0" fill="none" stroke="rgba(210,230,255,0.5)" stroke-width="0.5">
-        <animate attributeName="rx" values="0;3;0" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
-        <animate attributeName="ry" values="0;0.8;0" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
-        <animate attributeName="stroke-opacity" values="0.5;0;0.5" dur="${splashDuration}s" begin="${splashDelay}s" repeatCount="indefinite"/>
-      </ellipse>
-      <circle cx="${splashX}" cy="97" r="0.5" fill="rgba(210,230,255,0.45)" opacity="0">
-        <animateTransform attributeName="transform" type="translate"
-          from="0,0" to="${((i%2)?1.5:-1.5)},-4" dur="${splashDuration*0.4}s" begin="${splashDelay}s" repeatCount="indefinite"/>
-        <animate attributeName="opacity" values="0;0.6;0" dur="${splashDuration*0.4}s" begin="${splashDelay}s" repeatCount="indefinite"/>
-      </circle>`;
-    }
     return `<g>${dropsSvg}</g>`;
-    }
+  }
 
   _generateHailStones() {
     let hailOutput = '';
@@ -949,9 +956,8 @@ class ModernWeatherCard extends HTMLElement {
   // forecast rendering
 
   _renderForecast() {
-    const forecastElement = this.shadowRoot.getElementById('forecast');
     if (!this._config.show_forecast || !this._forecast || this._forecast.length === 0) { 
-        forecastElement.innerHTML = ''; 
+        this._els.forecast.innerHTML = ''; 
         return; 
     }
     
@@ -985,7 +991,7 @@ class ModernWeatherCard extends HTMLElement {
         </div>`;
     });
     
-    forecastElement.innerHTML = htmlOutput;
+    this._els.forecast.innerHTML = htmlOutput;
   }
 
   _generateSmallForecastIcon(iconKey, size) {
@@ -1082,4 +1088,4 @@ globalThis.customCards.push({
   documentationURL: 'https://github.com/mwckr/homassistant-modern-weather-card',
   preview: true
 });
-console.info('%c MODERN-WEATHER %c v0.1.1 ','background:#2563eb;color:#fff;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px','background:#0f172a;color:#f8fafc;padding:2px 6px;border-radius:0 4px 4px 0');
+console.info('%c MODERN-WEATHER %c v0.1.2 ','background:#2563eb;color:#fff;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px','background:#0f172a;color:#f8fafc;padding:2px 6px;border-radius:0 4px 4px 0');

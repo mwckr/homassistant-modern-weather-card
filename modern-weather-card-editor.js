@@ -1,6 +1,70 @@
+const EDITOR_SCHEMA = [
+  { name: 'entity',           selector: { entity: { domain: 'weather' } } },
+  { name: 'forecast_entity',  selector: { entity: { domain: 'weather' } } },
+  { name: 'sun_entity',       selector: { entity: { domain: 'sun'     } } },
+  { name: 'name',             selector: { text: {} } },
+  {
+    name: 'time_format',
+    selector: {
+      select: {
+        options: [
+          { value: 'default', label: 'System Default' },
+          { value: '12',      label: '12 Hour' },
+          { value: '24',      label: '24 Hour' }
+        ],
+        mode: 'dropdown'
+      }
+    }
+  },
+  {
+    name: 'forecast_days',
+    selector: { number: { min: 1, max: 7, mode: 'slider', step: 1 } }
+  },
+  {
+    name: 'alert_lookahead',
+    selector: { number: { min: 0, max: 24, mode: 'slider', step: 1 } }
+  },
+  {
+    type: 'grid',
+    name: '',
+    schema: [
+      { name: 'show_forecast', selector: { boolean: {} } },
+      { name: 'show_low_temp', selector: { boolean: {} } },
+      { name: 'show_no_temp',  selector: { boolean: {} } }
+    ]
+  },
+  // ui_action selector for tap action config
+  { name: 'tap_action', selector: { ui_action: {} } }
+];
+
+const EDITOR_LABELS = {
+  entity:          'Weather Entity (Required)',
+  forecast_entity: 'Forecast Entity (Optional)',
+  sun_entity:      'Sun Entity',
+  time_format:     'Time Format Override',
+  forecast_days:   'Forecast Days',
+  alert_lookahead: 'Forecast Alert Lookahead (Hours, 0 = off)',
+  name:            'Location Name',
+  show_forecast:   'Show forecast',
+  show_low_temp:   'Show low temperature',
+  show_no_temp:    'Show no temperature (overrides low temp)',
+  tap_action:      'Tap Action',
+};
+
 class ModernWeatherCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { ...config };
+    // apply same defaults as the main card so sliders/toggles show
+    // the effective value rather than blank for older saved configs
+    this._config = {
+      show_forecast: true,
+      show_low_temp: false,
+      show_no_temp: false,
+      forecast_days: 5,
+      sun_entity: 'sun.sun',
+      time_format: 'default',
+      alert_lookahead: 12,
+      ...config,
+    };
     this._render();
   }
 
@@ -21,62 +85,9 @@ class ModernWeatherCardEditor extends HTMLElement {
       `;
 
       this._form = this.querySelector('#form');
-
-      this._form.schema = [
-        { name: 'entity',           selector: { entity: { domain: 'weather' } } },
-        { name: 'forecast_entity',  selector: { entity: { domain: 'weather' } } },
-        { name: 'sun_entity',       selector: { entity: { domain: 'sun'     } } },
-        { name: 'name',             selector: { text: {} } },
-        {
-          name: 'time_format',
-          selector: {
-            select: {
-              options: [
-                { value: 'default', label: 'System Default' },
-                { value: '12',      label: '12 Hour' },
-                { value: '24',      label: '24 Hour' }
-              ],
-              mode: 'dropdown'
-            }
-          }
-        },
-        {
-          name: 'forecast_days',
-          selector: { number: { min: 1, max: 7, mode: 'slider', step: 1 } }
-        },
-        {
-          name: 'alert_lookahead',
-          selector: { number: { min: 0, max: 24, mode: 'slider', step: 1 } }
-        },
-        {
-          type: 'grid',
-          name: '',
-          schema: [
-            { name: 'show_forecast', selector: { boolean: {} } },
-            { name: 'show_low_temp', selector: { boolean: {} } },
-            { name: 'show_no_temp',  selector: { boolean: {} } }
-          ]
-        },
-        // ui_action selector for tap action config
-        { name: 'tap_action', selector: { ui_action: {} } }
-      ];
-
-      this._form.computeLabel = (schemaProperty) => {
-        switch (schemaProperty.name) {
-          case 'entity':           return 'Weather Entity (Required)';
-          case 'forecast_entity':  return 'Forecast Entity (Optional)';
-          case 'sun_entity':       return 'Sun Entity';
-          case 'time_format':      return 'Time Format Override';
-          case 'forecast_days':    return 'Forecast Days';
-          case 'alert_lookahead':  return 'Forecast Alert Lookahead (Hours, 0 = off)';
-          case 'name':             return 'Location Name';
-          case 'show_forecast':    return 'Show forecast';
-          case 'show_low_temp':    return 'Show low temperature';
-          case 'show_no_temp':     return 'Show no temperature (overrides low temp)';
-          case 'tap_action':       return 'Tap Action';
-          default: return schemaProperty.name;
-        }
-      };
+      this._form.schema = EDITOR_SCHEMA;
+      this._form.computeLabel = (schema) =>
+        EDITOR_LABELS[schema.name] ?? schema.name;
 
       this._form.addEventListener('value-changed', (ev) => {
         // stop propagation to prevent HA dialog double-handling
