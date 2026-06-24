@@ -1,4 +1,4 @@
-// Modern Weather Card v0.1.2
+// Modern Weather Card v0.1.3
 
 const CUSTOM_STRINGS = {
   en: { alertUntil: '{condition} until {time}', alertIn: '{condition} in {mins} min', alertFrom: '{condition} from {time}' },
@@ -1088,4 +1088,4 @@ globalThis.customCards.push({
   documentationURL: 'https://github.com/mwckr/homassistant-modern-weather-card',
   preview: true
 });
-console.info('%c MODERN-WEATHER %c v0.1.2 ','background:#2563eb;color:#fff;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px','background:#0f172a;color:#f8fafc;padding:2px 6px;border-radius:0 4px 4px 0');
+console.info('%c MODERN-WEATHER %c v0.1.3 ','background:#2563eb;color:#fff;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px','background:#0f172a;color:#f8fafc;padding:2px 6px;border-radius:0 4px 4px 0');
