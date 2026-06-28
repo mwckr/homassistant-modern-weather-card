@@ -6,8 +6,8 @@ Currently, only the latest release of the Zuhause Weather Card receives security
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1.0 | :x:                |
+| 0.1.x   |     yes            |
+| < 0.1.0 |     no             |
 
 ## Reporting a Vulnerability
 
