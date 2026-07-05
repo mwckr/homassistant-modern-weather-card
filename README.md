@@ -43,14 +43,13 @@ Add the card to your dashboard. It can be configured via the visual UI editor or
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `entity` | string | **Required** | The primary weather entity block to track. |
-| `name` | string | `""` | Custom label for the location. |
+| `name` | string | entity friendly name | Custom label for the location. Set to `""` to hide the location label entirely. |
 | `show_forecast` | boolean | `true` | Display the multi-day forecast section. |
 | `show_low_temp` | boolean | `false` | Display low temperatures in the forecast. |
 | `show_no_temp` | boolean | `false` | Hide temperatures entirely from the forecast. |
 | `forecast_days` | number | `5` | Define the number of days rendered in the forecast summary. |
-| `animated` | boolean | `true` | Toggle visual animations. |
 | `sun_entity` | string | `sun.sun` | Entity used to determine time-of-day gradients. `sun.sun` is enabled by default in Home Assistant. This should help show sunset / night visuals depending on your location and season. |
-| `time_format` | string | `default` | Override time display: `default` uses your users setting. Custom overrides with `12`, or `24`. |
-| `alert_lookahead` | number | `12` | Hours ahead to scan for upcoming weather events (1-24). |
+| `time_format` | string | `default` | Override time display: `default` uses your Home Assistant user profile setting. Custom overrides with `12`, `24`, or `system` (browser/OS preference). |
+| `alert_lookahead` | number | `12` | Hours ahead to scan for upcoming weather events (0-24, `0` disables the hint). |
 | `forecast_entity` | string | `config.entity` | Separate entity to source the forecast array, if different from primary. |
 | `tap_action` | object | `{ action: 'more-info' }` | Standard Home Assistant action triggered on physical tap/click. |

@@ -35,8 +35,11 @@ const formatTime = (date, localeObj = {}, configFormat = 'default') => {
   return new Intl.DateTimeFormat(lang, options).format(date);
 };
 
-const formatDayLabel = (date, locale = 'en') => 
+const formatDayLabel = (date, locale = 'en') =>
   new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(date);
+
+const formatTodayLabel = (locale = 'en') =>
+  new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(0, 'day');
 
 // conditions that trigger short-forecast alerts
 const NOTABLE_CONDITIONS = ['lightning-rainy', 'lightning', 'hail', 'pouring', 'rainy', 'snowy-rainy', 'snowy', 'windy-variant', 'windy'];
@@ -107,7 +110,6 @@ const STYLES = `
 
   .hero-icon { position: relative; z-index: 5; flex-shrink: 0; margin-right: -4px; }
   .hero-icon svg { display: block; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.25)); }
-  .error { padding: 16px; color: var(--error-color, #ef4444); font-size: 14px; }
   .error-overlay {
     display: none; position: absolute; inset: 0; z-index: 20;
     align-items: center; justify-content: center;
@@ -172,6 +174,8 @@ class ModernWeatherCard extends HTMLElement {
     this._forecast = [];
     this._hourlyForecast = [];
     this._subGeneration = 0;
+    this._failedSubTarget = null;
+    this._failedSubTime = 0;
   }
 
   // HA lifecycle
@@ -184,7 +188,6 @@ class ModernWeatherCard extends HTMLElement {
     this._unsubForecast();
 
     this._config = {
-      name: '',
       show_forecast: true,
       show_low_temp: false,
       show_no_temp: false,
@@ -204,6 +207,16 @@ class ModernWeatherCard extends HTMLElement {
     this._forecast = [];
     this._hourlyForecast = [];
     this._lastStateHash = '';
+    // reset scene so the next update rebuilds layers and restarts lightning
+    this._lastSceneKey = '';
+    this._failedSubTarget = null;
+
+    // re-render immediately on live reconfigure; the hass setter's
+    // relevance gate won't fire without an entity state change
+    if (this._built && this._hass) {
+      this._update();
+      this._ensureForecastSub();
+    }
   }
 
   set hass(hass) {
@@ -424,6 +437,8 @@ class ModernWeatherCard extends HTMLElement {
       this._lastSceneKey = sceneKey;
       // clear pending lightning timers from previous scene
       this._clearAllTimeouts();
+      // drop a mid-flash overlay whose removal timer was just cleared
+      this._els.hero.classList.remove('lightning-flash');
     }
 
     const skyPalette = this._getSkyPalette(timeOfDay);
@@ -974,7 +989,7 @@ class ModernWeatherCard extends HTMLElement {
         // label first entry "Today" if it matches current date
         const isToday = index === 0 && fcDate.toDateString() === todayDateStr;
         const dayLabel = isToday
-          ? (this._hass.localize('ui.components.calendar.event.today') || 'Today')
+          ? formatTodayLabel(locale)
           : formatDayLabel(fcDate, locale);
         
         const stringHigh = this._config.show_no_temp ? '' :
@@ -1014,6 +1029,9 @@ class ModernWeatherCard extends HTMLElement {
     if (!this._hass?.connection || !this._config?.entity) return;
     const targetSub = `${this._config.entity}|${this._config.forecast_entity}`;
     if (this._subscribedEntity === targetSub) return;
+    // after a failed subscribe, wait out the cooldown instead of retrying
+    // (and churning the hourly sub) on every hass update
+    if (this._failedSubTarget === targetSub && Date.now() - this._failedSubTime < 60000) return;
 
     // mark target before first await to deduplicate concurrent calls
     this._unsubForecast();
@@ -1039,10 +1057,16 @@ class ModernWeatherCard extends HTMLElement {
         if (generation === this._subGeneration) this._subscribedEntity = null;
       } else {
         this._forecastUnsub = unsub;
+        this._failedSubTarget = null;
       }
     } catch {
-      // subscription failed; clear sentinel so next hass update retries
-      if (generation === this._subGeneration) this._subscribedEntity = null;
+      if (generation === this._subGeneration) {
+        // clear sentinel so a retry is possible, but rate-limit retries
+        // via the cooldown gate above
+        this._subscribedEntity = null;
+        this._failedSubTarget = targetSub;
+        this._failedSubTime = Date.now();
+      }
       // fall back to legacy entity attribute forecast
       const fallback = this._hass.states[this._config.forecast_entity];
       if (fallback?.attributes?.forecast) {

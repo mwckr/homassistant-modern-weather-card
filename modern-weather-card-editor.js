@@ -8,9 +8,10 @@ const EDITOR_SCHEMA = [
     selector: {
       select: {
         options: [
-          { value: 'default', label: 'System Default' },
+          { value: 'default', label: 'Default (User Profile)' },
           { value: '12',      label: '12 Hour' },
-          { value: '24',      label: '24 Hour' }
+          { value: '24',      label: '24 Hour' },
+          { value: 'system',  label: 'System (Browser/OS)' }
         ],
         mode: 'dropdown'
       }
