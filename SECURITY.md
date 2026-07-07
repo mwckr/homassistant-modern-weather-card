@@ -4,11 +4,6 @@
 
 Currently, only the latest release of the Zuhause Weather Card receives security updates.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   |     yes            |
-| < 0.1.0 |     no             |
-
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability within this project, please do not disclose it publicly. 
