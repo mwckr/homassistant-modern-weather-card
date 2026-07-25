@@ -195,39 +195,32 @@ export const cardStyles = css`
   .forecast {
     display: flex;
     gap: 8px;
-    margin-top: 12px;
+    margin-top: 16px;
+    padding: 0 4px;
   }
   .fc-day {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 12px 6px;
-    border-radius: calc(var(--ha-card-border-radius, 20px) - 4px);
-    background: var(--card-background-color, rgba(255, 255, 255, 0.06));
-    border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    box-shadow:
-      0 4px 10px rgba(0, 0, 0, 0.05),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    transition:
-      transform 0.2s ease,
-      background 0.2s ease;
+    gap: 8px;
+    padding: 4px 2px;
+    transition: transform 0.2s ease;
   }
   @media (hover: hover) {
     .fc-day:hover {
-      background: var(--secondary-background-color, rgba(255, 255, 255, 0.1));
-      transform: translateY(-1px);
+      transform: translateY(-2px);
     }
   }
   .fc-d {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.6px;
     color: var(--secondary-text-color, #94a3b8);
+  }
+  .fc-d.today {
+    color: var(--modern-weather-accent, #f5a623);
   }
   .fc-icon {
     height: 28px;

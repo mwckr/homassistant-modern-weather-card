@@ -288,7 +288,7 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
               : null;
           return html`
             <div class="fc-day">
-              <span class="fc-d">${label}</span>
+              <span class="fc-d ${classMap({ today: isToday })}">${label}</span>
               <div class="fc-icon" aria-hidden="true">
                 ${unsafeHTML(generateSmallForecastIcon(iconKey, 28))}
               </div>
