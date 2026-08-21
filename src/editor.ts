@@ -10,6 +10,7 @@ const EDITOR_SCHEMA = [
   { name: 'entity', required: true, selector: { entity: { domain: 'weather' } } },
   { name: 'forecast_entity', selector: { entity: { domain: 'weather' } } },
   { name: 'sun_entity', selector: { entity: { domain: 'sun' } } },
+  { name: 'aqi_entity', selector: { entity: { domain: 'sensor' } } },
   { name: 'name', selector: { text: {} } },
   {
     name: 'time_format',
@@ -40,6 +41,8 @@ const EDITOR_SCHEMA = [
       { name: 'show_forecast', selector: { boolean: {} } },
       { name: 'show_low_temp', selector: { boolean: {} } },
       { name: 'show_no_temp', selector: { boolean: {} } },
+      { name: 'show_metrics', selector: { boolean: {} } },
+      { name: 'show_sun_path', selector: { boolean: {} } },
     ],
   },
   { name: 'tap_action', selector: { ui_action: {} } },
@@ -49,6 +52,7 @@ const EDITOR_LABELS: Record<string, string> = {
   entity: 'Weather Entity (Required)',
   forecast_entity: 'Forecast Entity (Optional)',
   sun_entity: 'Sun Entity',
+  aqi_entity: 'Air Quality Sensor (Optional)',
   time_format: 'Time Format Override',
   forecast_days: 'Forecast Days',
   alert_lookahead: 'Forecast Alert Lookahead (Hours, 0 = off)',
@@ -56,6 +60,8 @@ const EDITOR_LABELS: Record<string, string> = {
   show_forecast: 'Show forecast',
   show_low_temp: 'Show low temperature',
   show_no_temp: 'Show no temperature (overrides low temp)',
+  show_metrics: 'Show metric tiles',
+  show_sun_path: 'Show sun path & clock',
   tap_action: 'Tap Action',
 };
 

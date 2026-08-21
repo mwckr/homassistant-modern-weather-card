@@ -8,13 +8,25 @@ import type { HomeAssistant, LovelaceCard, LovelaceCardEditor } from 'custom-car
 import { CARD_NAME, CONFIG_DEFAULTS, EDITOR_NAME, getForecastIcon } from './const';
 import { fireEvent } from './fire-event';
 import { getShortForecastText } from './forecast-alert';
-import { formatDayLabel, formatTodayLabel } from './format';
+import { formatDate, formatDayLabel, formatTime, formatTodayLabel } from './format';
+import { resolveTiles, type TileData } from './metrics';
+import { renderPhotoScene } from './scene/cloud-scene';
+import { FxEngine, type FxScene } from './scene/fx-engine';
+import { hasGlassDrops, renderGlassDrops } from './scene/glass-drops';
 import { cardStyles } from './styles';
 import { generateSmallForecastIcon, LOCATION_PIN_SVG } from './svg/forecast-icons';
 import { generateWeatherIconSVG } from './svg/hero-icons';
 import { renderHorizon, renderStars, renderWeatherLayer } from './svg/scene';
+import { getSunMarkerPos, renderSunArc } from './svg/sun-path';
+import { TILE_ICONS } from './svg/tile-icons';
 import type { ForecastEvent, ForecastItem, ModernWeatherCardConfig, ResolvedConfig } from './types';
-import { getSkyPalette, getTimeOfDay, getWeatherMeta } from './weather-meta';
+import {
+  getSkyPalette,
+  getSunProgress,
+  getSurfaceMode,
+  getTimeOfDay,
+  getWeatherMeta,
+} from './weather-meta';
 
 // localize condition slug via HA, fallback to humanized slug
 const localizeCondition = (hass: HomeAssistant, condition: string): string => {
@@ -27,6 +39,17 @@ const localizeCondition = (hass: HomeAssistant, condition: string): string => {
 
 const SUB_RETRY_COOLDOWN_MS = 60000;
 
+// canvas effect per condition; anything else runs no precipitation loop
+const FX_BY_CONDITION: Record<string, FxScene> = {
+  rainy: 'rain',
+  hail: 'rain',
+  pouring: 'pour',
+  'snowy-rainy': 'sleet',
+  snowy: 'snow',
+  lightning: 'storm',
+  'lightning-rainy': 'storm-rain',
+};
+
 type Unsub = () => void | Promise<void>;
 
 @customElement(CARD_NAME)
@@ -34,7 +57,6 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
   @state() private _config?: ResolvedConfig;
   @state() private _forecast: ForecastItem[] = [];
   @state() private _hourlyForecast: ForecastItem[] = [];
-  @state() private _flash = false;
 
   private _hass?: HomeAssistant;
   private _forecastUnsub?: Unsub;
@@ -43,10 +65,35 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
   private _subGeneration = 0;
   private _failedSubTarget: string | null = null;
   private _failedSubTime = 0;
-  private _activeTimeouts = new Set<number>();
-  private _lightningActive = false;
-  private _lastSceneKey = '';
   private _tickInterval?: number;
+  private _stormLitTimer?: number;
+  private readonly _fx = new FxEngine();
+
+  public constructor() {
+    super();
+    // lightning strikes light the whole card: instant on (the .storm-lit
+    // class disables the overlay's transition), a brief hold, then the
+    // transition carries the decay — a snap, not a slow glow
+    this._fx.onFlash = (lift) => {
+      const frame = this.renderRoot?.querySelector('.frame') as HTMLElement | null;
+      if (!frame) return;
+      frame.classList.add('storm-lit');
+      frame.style.setProperty('--storm-lit', lift.toFixed(2));
+      window.clearTimeout(this._stormLitTimer);
+      this._stormLitTimer = window.setTimeout(() => {
+        frame.classList.remove('storm-lit');
+        frame.style.setProperty('--storm-lit', '0');
+      }, 110);
+    };
+    // rain lands on the metric tiles' top edge; measured live so it tracks
+    // resizes and config changes
+    this._fx.floorProvider = () => {
+      const canvas = this.renderRoot?.querySelector('.fx-canvas');
+      const tiles = this.renderRoot?.querySelector('.tiles');
+      if (!canvas || !tiles) return null;
+      return tiles.getBoundingClientRect().top - canvas.getBoundingClientRect().top;
+    };
+  }
 
   static override styles = cardStyles;
 
@@ -106,15 +153,22 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
   public override connectedCallback(): void {
     super.connectedCallback();
     this._ensureForecastSub();
-    // restart lightning if scene was active before detach
-    if (this._lightningActive) this._scheduleLightning();
+    // resume the effects loop if the card returns to a dashboard
+    this._fx.attach(this.renderRoot?.querySelector('.fx-canvas') ?? null);
     // refresh time-based labels every minute — but only when one is actually
-    // on screen (alert text needs hourly data, "Today" needs forecast rows)
-    // and the page is visible; hidden dashboards skip the re-render entirely
+    // on screen (the sun-path row shows a live clock, alert text needs hourly
+    // data, "Today" needs forecast rows) and the page is visible; hidden
+    // dashboards skip the re-render entirely
     window.clearInterval(this._tickInterval);
     this._tickInterval = window.setInterval(() => {
       if (document.hidden) return;
-      if (this._hourlyForecast.length === 0 && !this._config?.show_forecast) return;
+      if (
+        !this._config?.show_sun_path &&
+        this._hourlyForecast.length === 0 &&
+        !this._config?.show_forecast
+      ) {
+        return;
+      }
       this.requestUpdate();
     }, 60000);
   }
@@ -122,7 +176,8 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
   public override disconnectedCallback(): void {
     super.disconnectedCallback();
     this._unsubForecast();
-    this._clearAllTimeouts();
+    this._fx.destroy();
+    window.clearTimeout(this._stormLitTimer);
     window.clearInterval(this._tickInterval);
   }
 
@@ -147,13 +202,13 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
   }
 
   public getCardSize(): number {
-    return this._config?.show_forecast ? 5 : 3;
+    return this._config?.show_forecast ? 9 : 7;
   }
 
   public getGridOptions(): Record<string, number> {
     return this._config?.show_forecast
-      ? { rows: 4, columns: 12, min_rows: 4 }
-      : { rows: 2, columns: 12, min_rows: 2 };
+      ? { rows: 8, columns: 12, min_rows: 6 }
+      : { rows: 6, columns: 12, min_rows: 5 };
   }
 
   // render
@@ -167,7 +222,7 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
     if (!stateObj) {
       return html`
         <ha-card>
-          <div class="hero">
+          <div class="frame mode-dark">
             <div class="error-overlay">Entity not found: ${config.entity}</div>
           </div>
         </ha-card>
@@ -179,6 +234,7 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
     const numericTemp =
       rawTemp != null && Number.isFinite(+rawTemp) ? Math.round(+rawTemp) : null;
     const timeOfDay = getTimeOfDay(hass.states[config.sun_entity]);
+    const surfaceMode = getSurfaceMode(timeOfDay);
     const meta = getWeatherMeta(condition, timeOfDay);
     const conditionLabel = localizeCondition(hass, condition);
     // empty string in config hides the pin; undefined falls back to friendly_name
@@ -196,7 +252,20 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
       localizeCondition: (c) => localizeCondition(hass, c),
     });
 
-    const heroBackground = `linear-gradient(135deg, ${getSkyPalette(condition, timeOfDay).join(', ')})`;
+    const skyBackground = `linear-gradient(168deg, ${getSkyPalette(condition, timeOfDay).join(', ')})`;
+    const sunProgress = config.show_sun_path
+      ? getSunProgress(hass.states[config.sun_entity])
+      : null;
+    const marker = sunProgress != null ? getSunMarkerPos(sunProgress) : null;
+    const tiles = config.show_metrics
+      ? resolveTiles(
+          stateObj.attributes,
+          config.aqi_entity ? hass.states[config.aqi_entity] : undefined,
+          hass.locale,
+        )
+      : [];
+    const now = new Date();
+
     const tapAction = config.tap_action?.action ?? 'more-info';
     const interactive = tapAction !== 'none';
     const ariaLabel = [locationName, conditionLabel, numericTemp != null ? `${numericTemp}°` : '']
@@ -212,49 +281,114 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
         @click=${this._handleTap}
         @keydown=${this._handleKeydown}
       >
-        <div
-          class="hero ${classMap({ 'lightning-flash': this._flash })}"
-          style=${styleMap({ background: heroBackground })}
-        >
-          <div class="stars" aria-hidden="true">
-            ${timeOfDay === 'night' ? unsafeHTML(renderStars()) : nothing}
-          </div>
-          <div class="scene-bg" aria-hidden="true">
-            ${meta.scene
-              ? unsafeHTML(renderHorizon(meta.scene === 'horizon-dawn' ? 'dawn' : 'dusk'))
-              : nothing}
-          </div>
-          <div
-            class="weather-tint"
-            aria-hidden="true"
-            style=${styleMap({ background: meta.tint || 'none' })}
-          ></div>
-          <div class="weather-layer" aria-hidden="true">
-            ${unsafeHTML(renderWeatherLayer(condition))}
-          </div>
-
-          <div class="hero-text">
-            ${locationName
-              ? html`<div class="loc">${unsafeHTML(LOCATION_PIN_SVG)}<span>${locationName}</span></div>`
-              : nothing}
-            <div class="temp">${numericTemp != null ? `${numericTemp}°` : '--'}</div>
-            <div class="cond">
-              ${highTemp != null
-                ? `${conditionLabel} · ${highTemp}°${lowTemp != null ? ` / ${lowTemp}°` : ''}`
-                : conditionLabel}
+        <div class="frame ${classMap({ [`mode-${surfaceMode}`]: true })}">
+          <div class="sky" aria-hidden="true" style=${styleMap({ background: skyBackground })}>
+            <div class="stars">${timeOfDay === 'night' ? unsafeHTML(renderStars()) : nothing}</div>
+            <div class="scene-bg">
+              ${meta.scene
+                ? unsafeHTML(renderHorizon(meta.scene === 'horizon-dawn' ? 'dawn' : 'dusk'))
+                : nothing}
             </div>
+            <div class="photo-layer">${unsafeHTML(renderPhotoScene(condition, timeOfDay))}</div>
+            <div class="weather-tint" style=${styleMap({ background: meta.tint || 'none' })}></div>
+            <div class="weather-layer">${unsafeHTML(renderWeatherLayer(condition))}</div>
+            <div class="sky-fade"></div>
           </div>
 
-          <div class="hero-center">
-            ${alertText ? html`<div class="short-fc">${alertText}</div>` : nothing}
+          <canvas class="fx-canvas"></canvas>
+
+          <div class="content">
+            <div class="top-row">
+              ${locationName
+                ? html`<div class="loc">${unsafeHTML(LOCATION_PIN_SVG)}<span>${locationName}</span></div>`
+                : nothing}
+            </div>
+
+            <div class="upper">
+              ${config.show_sun_path
+                ? html`
+                    <div class="sun-arc" aria-hidden="true">
+                      ${unsafeHTML(renderSunArc(surfaceMode))}
+                      ${marker
+                        ? html`<div
+                            class="sun-dot"
+                            style=${styleMap({ left: `${marker.xPct}%`, top: `${marker.yPct}%` })}
+                          ></div>`
+                        : nothing}
+                    </div>
+                  `
+                : nothing}
+              ${meta.icon === 'moon' || meta.icon === 'warning'
+                ? html`<div class="hero-icon" aria-hidden="true">
+                    ${unsafeHTML(generateWeatherIconSVG(meta.icon, 96))}
+                  </div>`
+                : nothing}
+              <div class="temp-block">
+                <div class="temp">${numericTemp != null ? `${numericTemp}°` : '--'}</div>
+                <div class="cond">
+                  ${highTemp != null
+                    ? `${conditionLabel} · ${highTemp}°${lowTemp != null ? ` / ${lowTemp}°` : ''}`
+                    : conditionLabel}
+                </div>
+                ${alertText ? html`<div class="short-fc">${alertText}</div>` : nothing}
+              </div>
+            </div>
+
+            ${config.show_sun_path
+              ? html`
+                  <div class="meta-row">
+                    <span class="mr-time">${formatTime(now, hass.locale, config.time_format)}</span>
+                    <span class="mr-date">${formatDate(now, hass.locale?.language || 'en')}</span>
+                  </div>
+                `
+              : nothing}
+            ${tiles.length > 0
+              ? html`<div class="tiles">${tiles.map((tile) => this._renderTile(tile))}</div>`
+              : nothing}
+            ${this._renderForecast()}
           </div>
 
-          <div class="hero-icon" aria-hidden="true">
-            ${unsafeHTML(generateWeatherIconSVG(meta.icon, 120))}
-          </div>
+          ${hasGlassDrops(condition)
+            ? html`<div class="drops-layer" aria-hidden="true">
+                ${unsafeHTML(renderGlassDrops())}
+              </div>`
+            : nothing}
         </div>
-        ${this._renderForecast()}
       </ha-card>
+    `;
+  }
+
+  private _renderTile(tile: TileData): TemplateResult {
+    return html`
+      <div class="tile">
+        <div class="tile-head">
+          <span>${tile.title}</span>
+          ${unsafeHTML(TILE_ICONS[tile.icon])}
+        </div>
+        <div class="tile-value">
+          ${tile.value}${tile.unit ? html`<span class="tile-unit">${tile.unit}</span>` : nothing}
+        </div>
+        <div class="tile-foot">
+          <span class="tile-label">${tile.label}</span>
+          ${tile.meter.kind === 'scale'
+            ? html`
+                <div class="meter scale">
+                  <div class="meter-thumb" style=${styleMap({ left: `${tile.meter.pct}%` })}></div>
+                </div>
+              `
+            : html`
+                <div class="meter fill">
+                  <div
+                    class="meter-fill"
+                    style=${styleMap({
+                      width: `${tile.meter.pct}%`,
+                      background: tile.meter.color ?? '#60a5fa',
+                    })}
+                  ></div>
+                </div>
+              `}
+        </div>
+      </div>
     `;
   }
 
@@ -301,7 +435,7 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
     `;
   }
 
-  // lightning scene management reacts to condition/time-of-day changes
+  // keep the canvas effects engine in sync with the rendered condition
 
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
@@ -309,63 +443,8 @@ export class ModernWeatherCard extends LitElement implements LovelaceCard {
     const stateObj = this._hass.states[this._config.entity];
     if (!stateObj) return;
 
-    const timeOfDay = getTimeOfDay(this._hass.states[this._config.sun_entity]);
-    const sceneKey = `${stateObj.state}|${timeOfDay}`;
-    if (sceneKey === this._lastSceneKey) return;
-
-    this._lastSceneKey = sceneKey;
-    // clear pending lightning timers from the previous scene
-    this._clearAllTimeouts();
-    // drop a mid-flash overlay whose removal timer was just cleared
-    if (this._flash) this._flash = false;
-    this._manageLightning(stateObj.state);
-  }
-
-  private _manageLightning(condition: string): void {
-    this._lightningActive = condition === 'lightning' || condition === 'lightning-rainy';
-    if (this._lightningActive) this._scheduleLightning();
-  }
-
-  private _scheduleLightning(): void {
-    if (!this.isConnected || !this._lightningActive) return;
-    const delay = 4000 + Math.random() * 14000;
-
-    this._safeTimeout(() => {
-      if (!this._lightningActive) return;
-      this._triggerFlash();
-      this._scheduleLightning();
-    }, delay);
-  }
-
-  private _triggerFlash(): void {
-    this._flash = true;
-    this._safeTimeout(() => {
-      this._flash = false;
-    }, 120);
-
-    if (Math.random() > 0.6) {
-      this._safeTimeout(() => {
-        this._flash = true;
-        this._safeTimeout(() => {
-          this._flash = false;
-        }, 80);
-      }, 200);
-    }
-  }
-
-  // timeout helpers
-
-  private _safeTimeout(callback: () => void, delay: number): void {
-    const id = window.setTimeout(() => {
-      this._activeTimeouts.delete(id);
-      callback();
-    }, delay);
-    this._activeTimeouts.add(id);
-  }
-
-  private _clearAllTimeouts(): void {
-    for (const id of this._activeTimeouts) window.clearTimeout(id);
-    this._activeTimeouts.clear();
+    this._fx.attach(this.renderRoot?.querySelector('.fx-canvas') ?? null);
+    this._fx.setScene(FX_BY_CONDITION[stateObj.state] ?? null);
   }
 
   // tap actions

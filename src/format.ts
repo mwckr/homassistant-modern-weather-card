@@ -5,11 +5,55 @@ const CUSTOM_STRINGS: Record<string, Record<string, string>> = {
     alertUntil: '{condition} until {time}',
     alertIn: '{condition} in {mins} min',
     alertFrom: '{condition} from {time}',
+    tileAqi: 'Air Quality Index',
+    tileCloud: 'Cloud Cover',
+    tileHumidity: 'Humidity',
+    tileWind: 'Wind',
+    aqiGood: 'Good',
+    aqiModerate: 'Moderate',
+    aqiSensitive: 'Sensitive',
+    aqiUnhealthy: 'Unhealthy',
+    aqiVeryUnhealthy: 'Very unhealthy',
+    aqiHazardous: 'Hazardous',
+    levelDry: 'Dry',
+    levelComfortable: 'Comfortable',
+    levelHumid: 'Humid',
+    cloudClear: 'Clear',
+    cloudScattered: 'Scattered',
+    cloudMostly: 'Mostly cloudy',
+    cloudOvercast: 'Overcast',
+    windCalm: 'Calm',
+    windLight: 'Light',
+    windBreezy: 'Breezy',
+    windWindy: 'Windy',
+    windStormy: 'Stormy',
   },
   de: {
     alertUntil: '{condition} bis {time} Uhr',
     alertIn: '{condition} in {mins} Min.',
     alertFrom: '{condition} ab {time} Uhr',
+    tileAqi: 'Luftqualität',
+    tileCloud: 'Bewölkung',
+    tileHumidity: 'Luftfeuchtigkeit',
+    tileWind: 'Wind',
+    aqiGood: 'Gut',
+    aqiModerate: 'Mäßig',
+    aqiSensitive: 'Sensibel',
+    aqiUnhealthy: 'Ungesund',
+    aqiVeryUnhealthy: 'Sehr ungesund',
+    aqiHazardous: 'Gefährlich',
+    levelDry: 'Trocken',
+    levelComfortable: 'Angenehm',
+    levelHumid: 'Feucht',
+    cloudClear: 'Klar',
+    cloudScattered: 'Aufgelockert',
+    cloudMostly: 'Stark bewölkt',
+    cloudOvercast: 'Bedeckt',
+    windCalm: 'Windstill',
+    windLight: 'Leicht',
+    windBreezy: 'Frisch',
+    windWindy: 'Windig',
+    windStormy: 'Stürmisch',
   },
 };
 
@@ -55,6 +99,10 @@ export const formatTime = (
 
   return new Intl.DateTimeFormat(lang, options).format(date);
 };
+
+// medium date for the sun-path row, e.g. "Feb 2, 2025" / "2. Feb. 2025"
+export const formatDate = (date: Date, locale = 'en'): string =>
+  new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
 
 export const formatDayLabel = (date: Date, locale = 'en'): string =>
   new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(date);

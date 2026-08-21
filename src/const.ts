@@ -16,6 +16,8 @@ export const CONFIG_DEFAULTS = {
   time_format: 'default' as const,
   alert_lookahead: 12,
   tap_action: { action: 'more-info' } as ActionConfig,
+  show_metrics: true,
+  show_sun_path: true,
 };
 
 // single registry for per-condition behavior. Everything condition-driven

@@ -1,5 +1,5 @@
 import { getSkyClass } from './const';
-import type { EntityState, SkyClass, TimeOfDay } from './types';
+import type { EntityState, SkyClass, SurfaceMode, TimeOfDay } from './types';
 
 export interface WeatherMeta {
   icon: string;
@@ -74,6 +74,42 @@ const SKY_PALETTES: Record<SkyClass, Record<TimeOfDay, string[]>> = {
 
 export const getSkyPalette = (condition: string, timeOfDay: TimeOfDay): string[] =>
   SKY_PALETTES[getSkyClass(condition)][timeOfDay];
+
+// daytime hours get a bright lower zone (the reference look: sky fading into
+// near-white where the tiles sit); evening and night fade into dark slate
+export const getSurfaceMode = (timeOfDay: TimeOfDay): SurfaceMode =>
+  timeOfDay === 'day' || timeOfDay === 'dawn' ? 'light' : 'dark';
+
+// position of the sun along today's sunrise→sunset arc, 0..1; null while the
+// sun is down (or the entity can't tell us)
+export const getSunProgress = (sunState?: EntityState): number | null => {
+  const attrs = sunState?.attributes;
+  const nextRising = attrs?.next_rising ? new Date(attrs.next_rising as string) : null;
+  const nextSetting = attrs?.next_setting ? new Date(attrs.next_setting as string) : null;
+
+  if (
+    !nextRising ||
+    !nextSetting ||
+    Number.isNaN(nextRising.getTime()) ||
+    Number.isNaN(nextSetting.getTime())
+  ) {
+    // no usable sun entity: approximate a 6:30–19:30 day from the clock
+    const hourOfDay = new Date().getHours() + new Date().getMinutes() / 60;
+    if (hourOfDay < 6.5 || hourOfDay > 19.5) return null;
+    return (hourOfDay - 6.5) / 13;
+  }
+
+  // sun below horizon: the next event is a rise, not a set
+  if (nextRising < nextSetting) return null;
+
+  // sun is up: today's sunset is next_setting, today's sunrise is roughly
+  // tomorrow's rise minus a day (drifts ~1 min/day — invisible on the arc)
+  const sunrise = nextRising.getTime() - 86400000;
+  const sunset = nextSetting.getTime();
+  if (sunset <= sunrise) return null;
+  const progress = (Date.now() - sunrise) / (sunset - sunrise);
+  return Math.min(1, Math.max(0, progress));
+};
 
 // icon/tint/scene selection per condition and time of day
 export const getWeatherMeta = (condition: string, timeOfDay: TimeOfDay): WeatherMeta => {

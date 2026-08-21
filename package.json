@@ -19,6 +19,7 @@
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c --watch",
+    "dev": "node dev/server.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

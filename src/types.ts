@@ -12,6 +12,10 @@ export interface ModernWeatherCardConfig extends LovelaceCardConfig {
   alert_lookahead?: number;
   forecast_entity?: string;
   tap_action?: ActionConfig;
+  /** optional AQI sensor feeding the left metric tile */
+  aqi_entity?: string;
+  show_metrics?: boolean;
+  show_sun_path?: boolean;
 }
 
 // config after setConfig applied defaults
@@ -28,6 +32,8 @@ export type ResolvedConfig = ModernWeatherCardConfig &
       | 'alert_lookahead'
       | 'forecast_entity'
       | 'tap_action'
+      | 'show_metrics'
+      | 'show_sun_path'
     >
   >;
 
@@ -51,6 +57,10 @@ export interface ForecastEvent {
 }
 
 export type TimeOfDay = 'day' | 'dawn' | 'dusk' | 'night';
+
+// tone of the card's lower zone the sky fades into: bright during daytime
+// hours, dark slate in the evening and at night
+export type SurfaceMode = 'light' | 'dark';
 
 // palette family a condition maps to; weather sets the mood, time of day modulates
 export type SkyClass = 'clear' | 'cloudy' | 'rain' | 'storm' | 'snow' | 'fog';
