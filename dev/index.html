@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Modern Weather Card — Redesign Preview</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #e6e8ec;
+      font-family: 'Segoe UI Variable Text', 'Segoe UI', Roboto, -apple-system, sans-serif;
+      color: #1a2232;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 18px;
+      padding: 12px 20px;
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(26, 34, 50, 0.08);
+    }
+    header h1 {
+      margin: 0 8px 0 0;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+    .group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .group-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: rgba(26, 34, 50, 0.45);
+      margin-right: 2px;
+    }
+    button.chip {
+      appearance: none;
+      border: 1px solid rgba(26, 34, 50, 0.12);
+      background: #fff;
+      color: #1a2232;
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    button.chip:hover { border-color: rgba(26, 34, 50, 0.3); }
+    button.chip.active {
+      background: #1a2232;
+      color: #fff;
+      border-color: #1a2232;
+    }
+    label.toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+    }
+    main {
+      display: flex;
+      justify-content: center;
+      padding: 40px 20px 80px;
+    }
+    #stage {
+      width: 420px;
+      max-width: 100%;
+      transition: width 0.25s ease;
+    }
+    .hint {
+      text-align: center;
+      font-size: 12px;
+      color: rgba(26, 34, 50, 0.45);
+      margin-top: 18px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Redesign Preview</h1>
+    <div class="group" id="scenarios"><span class="group-label">Scene</span></div>
+    <div class="group" id="widths"><span class="group-label">Width</span></div>
+    <div class="group" id="options"><span class="group-label">Options</span></div>
+    <div class="group" id="locales"><span class="group-label">Locale</span></div>
+  </header>
+  <main>
+    <div>
+      <div id="stage">
+        <modern-weather-card id="card"></modern-weather-card>
+      </div>
+      <p class="hint">Auto-reloads when <code>npm run dev</code> rebuilds the bundle.</p>
+    </div>
+  </main>
+  <script>
+    // surface page errors visibly — headless screenshots have no console
+    const showError = (label, detail) => {
+      const el = document.createElement('pre');
+      el.style.cssText =
+        'color:#b91c1c;background:#fef2f2;white-space:pre-wrap;padding:10px 20px;margin:0;font-size:12px';
+      el.textContent = `⚠ ${label}: ${detail}`;
+      document.body.prepend(el);
+    };
+    window.addEventListener('error', (e) => showError('error', e.error?.stack || e.message));
+    window.addEventListener('unhandledrejection', (e) =>
+      showError('unhandled promise', e.reason?.stack || e.reason),
+    );
+  </script>
+  <script type="module" src="./mock-hass.js"></script>
+</body>
+</html>

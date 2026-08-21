@@ -4,4 +4,3 @@ test.html
 node_modules/
 *.log
 /.claude
-/dev
